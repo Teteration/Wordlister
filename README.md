@@ -49,7 +49,7 @@ python3 wordlister.py [--url URL | --input-file PATH] [OPTIONS]
 ### 1. Extract from a single page
 
 ```bash
-python3 wordlister.py --url https://domain.tld --mode single --min-length 5 --max-length 12 --filter ascii --drop-obfuscated --output-format list```
+python3 wordlister.py --url https://example.com --mode single --min-length 5 --max-length 12 --filter ascii --drop-obfuscated --output-format list```
 ```
 
 ### 2. Crawl only same-domain URLs (not subdomains)
@@ -69,7 +69,7 @@ python3 wordlister.py --url https://example.com --mode subdomain --depth 2 --thr
 ```bash
 # Run GoSpider first
 
-gospider --site "https://domain.tld" --concurrent 5 --depth 5 | cut -d "-" -f 2|  grep sadadpsp | sort -u > url.txt
+gospider --site "https://example.com" --concurrent 5 --depth 5 | cut -d "-" -f 2|  grep sadadpsp | sort -u > url.txt
 
 # Then extract wordlist from url.txt
 
