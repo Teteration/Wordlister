@@ -1,7 +1,7 @@
 import argparse
 import requests
 from bs4 import BeautifulSoup
-from urllib.parse import urljoin, urlparse, unquote, parse_qs
+from urllib.parse import urlparse, unquote, parse_qs, urljoin
 import re
 import json
 import threading
@@ -77,84 +77,71 @@ def extract_words_from_html(html, base_url):
     for script in soup.find_all('script'):
         if script.string:
             words.update(extract_words_from_js(script.string))
-    return words, get_links(soup, base_url)
+    return words
 
-def get_links(soup, base_url):
-    links = set()
-    for tag in soup.find_all('a', href=True):
-        full_url = urljoin(base_url, tag['href'])
-        parsed = urlparse(full_url)
-        if parsed.scheme.startswith("http"):
-            links.add(full_url.split('#')[0])
-    return links
+def process_url(url, args, words_set):
+    try:
+        with lock:
+            if url in visited_urls:
+                return
+            visited_urls.add(url)
+        resp = requests.get(url, timeout=10)
+        html = resp.text
+        words = extract_words_from_html(html, url)
+        words.update(extract_words_from_url(url))
+        filtered = word_filter(words, args.min_length, args.max_length, args.filter, args.drop_obfuscated)
+        with lock:
+            words_set.update(filtered)
+    except Exception:
+        pass
 
-def should_visit(url, mode, base_domain, include_subdomains):
-    parsed = tldextract.extract(url)
-    domain = f"{parsed.domain}.{parsed.suffix}"
-    if mode == 'domain':
-        return domain == base_domain and parsed.subdomain == ''
-    elif mode == 'subdomain':
-        return domain == base_domain
-    return False
-
-def worker(q, words_set, args, base_domain):
+def worker(q, args, words_set):
     while True:
         try:
-            url, depth = q.get(timeout=3)
+            url = q.get(timeout=3)
         except queue.Empty:
             return
-        with lock:
-            if (url in visited_urls) or (depth > args.depth):
-                q.task_done()
-                continue
-            visited_urls.add(url)
-        try:
-            resp = requests.get(url, timeout=10)
-            html = resp.text
-            words, links = extract_words_from_html(html, url)
-            filtered = word_filter(words, args.min_length, args.max_length, args.filter, args.drop_obfuscated)
-            with lock:
-                words_set.update(filtered)
-            for link in links:
-                if should_visit(link, args.mode, base_domain, args.mode == 'subdomain'):
-                    q.put((link, depth + 1))
-        except Exception:
-            pass
+        process_url(url, args, words_set)
         q.task_done()
 
-def start_crawling(start_url, args):
-    parsed = tldextract.extract(start_url)
-    base_domain = f"{parsed.domain}.{parsed.suffix}"
-    q_urls = queue.Queue()
-    q_urls.put((start_url, 0))
+def process_urls_from_file(filepath, args):
     words_set = set()
-    threads = []
+    q_urls = queue.Queue()
 
+    with open(filepath, 'r') as f:
+        for line in f:
+            url = line.strip()
+            if url and urlparse(url).scheme.startswith("http"):
+                q_urls.put(url)
+
+    threads = []
     for _ in range(args.threads):
-        t = threading.Thread(target=worker, args=(q_urls, words_set, args, base_domain))
+        t = threading.Thread(target=worker, args=(q_urls, args, words_set))
         t.daemon = True
         t.start()
         threads.append(t)
 
     q_urls.join()
-
     return sorted(words_set)
 
 def single_page_mode(url, args):
     try:
         resp = requests.get(url, timeout=10)
         html = resp.text
-        words, _ = extract_words_from_html(html, url)
+        words = extract_words_from_html(html, url)
+        words.update(extract_words_from_url(url))
         return sorted(word_filter(words, args.min_length, args.max_length, args.filter, args.drop_obfuscated))
     except Exception as e:
         print(f"Error: {e}")
         return []
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Extract wordlist from a webpage or recursively crawl a domain.")
-    parser.add_argument("url", help="Target URL")
+    parser = argparse.ArgumentParser(description="Extract wordlist from a webpage or a list of URLs.")
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--url", help="Target URL to extract words from")
+    group.add_argument("--input-file", help="Path to file containing list of URLs (e.g. from GoSpider)")
     parser.add_argument("--mode", choices=["single", "domain", "subdomain"], default="single", help="Crawl mode")
-    parser.add_argument("--depth", type=int, default=2, help="Recursion depth for crawling")
+    parser.add_argument("--depth", type=int, default=2, help="Recursion depth (unused in file mode)")
     parser.add_argument("--threads", type=int, default=5, help="Number of concurrent threads")
     parser.add_argument("--min-length", type=int, default=1, help="Minimum word length")
     parser.add_argument("--max-length", type=int, default=100, help="Maximum word length")
@@ -164,10 +151,10 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    if args.mode == "single":
-        result = single_page_mode(args.url, args)
+    if args.input_file:
+        result = process_urls_from_file(args.input_file, args)
     else:
-        result = start_crawling(args.url, args)
+        result = single_page_mode(args.url, args)
 
     print(f"\n[+] Extracted {len(result)} words:\n")
     if args.output_format == "list":
@@ -175,4 +162,3 @@ if __name__ == "__main__":
     else:
         for word in result:
             print(word)
-
