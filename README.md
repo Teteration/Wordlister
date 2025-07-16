@@ -71,7 +71,7 @@ python3 wordlister.py --url https://example.com --mode subdomain --depth 2 --thr
 
 gospider --site "https://domain.tld" --concurrent 5 --depth 5 | cut -d "-" -f 2|  grep sadadpsp | sort -u > url.txt
 
-# Then extract wordlist from Paths.txt
+# Then extract wordlist from url.txt
 
 python3 wordlister.py \
   --input-file url.txt \
