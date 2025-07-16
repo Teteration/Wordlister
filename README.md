@@ -1,4 +1,4 @@
-# 🕷️ wordlister.py
+# 🕷️ wordlister
 
 **Wordlister** is a powerful Python tool that extracts useful keywords from web pages, HTML forms, URLs, JavaScript variables, and more.  
 It can recursively crawl a target domain or subdomains, or process pre-crawled URLs (like from GoSpider), and output a clean, filtered wordlist—ideal for penetration testing, recon, and fuzzing.
