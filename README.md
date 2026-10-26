@@ -1,7 +1,37 @@
 # 🕷️ wordlister
 
-**Wordlister** is a powerful Python tool that extracts useful keywords from web pages, HTML forms, URLs, JavaScript variables, and more.  
-It can recursively crawl a target domain or subdomains, or process pre-crawled URLs (like from GoSpider), and output a clean, filtered wordlist—ideal for penetration testing, recon, and fuzzing.
+**Wordlister** is a Python tool that extracts target-specific keywords from web pages, HTML fields, URLs, and inline JavaScript.
+It can process one target page or a file of pre-crawled URLs (for example, output from GoSpider) and produce a clean, filtered wordlist for authorized penetration testing, recon, and fuzzing.
+
+---
+
+## 🔍 Where Does the Wordlist Come From?
+
+Wordlister does **not** use a built-in dictionary and does not download a wordlist from a third-party source. It creates a new wordlist directly from the target URLs and the HTML returned by those URLs.
+
+For every URL it processes, Wordlister sends an HTTP request and extracts words from:
+
+- **Visible page text** — headings, labels, buttons, messages, and other text contained in the HTML.
+- **HTML field attributes** — attribute values from `meta`, `input`, `select`, and `textarea` elements. These can reveal names such as `username`, `csrf_token`, or `redirect`.
+- **URL paths** — words found in paths such as `/account/reset-password`.
+- **Query-string names and values** — words from a URL such as `?action=reset&user=admin`.
+- **Linked resource URLs** — paths and query strings found in the `href` and `src` attributes of links, stylesheets, scripts, and images.
+- **Inline JavaScript variables** — variable names and values from simple `var`, `let`, and `const` assignments inside the page.
+
+The collected words are then:
+
+1. Deduplicated.
+2. Filtered by `--min-length` and `--max-length`.
+3. Optionally limited to ASCII with `--filter ascii`.
+4. Optionally stripped of hex-like values with `--drop-obfuscated`.
+5. Sorted before being printed as a Python-style list or one word per line.
+
+### URL input modes
+
+- With `--url`, the current version downloads and analyzes that single page.
+- With `--input-file`, each valid HTTP/HTTPS URL in the file is downloaded and analyzed. This is how results from GoSpider, Burp Suite, or another crawler can be converted into one target-specific wordlist.
+
+> **Current limitation:** `--mode` and `--depth` are accepted as command-line options, but recursive crawling is not implemented yet. External JavaScript files referenced through `src` are not downloaded for JavaScript parsing; only words in their URLs and inline JavaScript are processed.
 
 ---
 
@@ -33,8 +63,8 @@ python3 wordlister.py [--url URL | --input-file PATH] [OPTIONS]
 |--------------------------|-----------------------------------------------------------------------------|
 | `--url`                  | Target URL to extract words from                                            |
 | `--input-file`           | Path to file containing list of URLs (e.g. from GoSpider)                   |
-| `--mode`                 | Crawl mode: `single`, `domain`, `subdomain` (default: `single`)             |
-| `--depth`                | Crawl recursion depth (used only with `--url`, default: `2`)                |
+| `--mode`                 | Reserved crawl mode option; currently does not change behavior              |
+| `--depth`                | Reserved crawl depth option; recursive crawling is not implemented yet      |
 | `--threads`              | Number of concurrent threads (default: `5`)                                 |
 | `--min-length`           | Minimum word length (default: `1`)                                          |
 | `--max-length`           | Maximum word length (default: `100`)                                        |
@@ -49,22 +79,16 @@ python3 wordlister.py [--url URL | --input-file PATH] [OPTIONS]
 ### 1. Extract from a single page
 
 ```bash
-python3 wordlister.py --url https://example.com --mode single --min-length 5 --max-length 12 --filter ascii --drop-obfuscated --output-format list```
+python3 wordlister.py --url https://example.com --mode single --min-length 5 --max-length 12 --filter ascii --drop-obfuscated --output-format list
 ```
 
-### 2. Crawl only same-domain URLs (not subdomains)
+### 2. Process a prepared list of URLs
 
 ```bash
-python3 wordlister.py --url https://example.com --mode domain --depth 2 --threads 5
+python3 wordlister.py --input-file url.txt --threads 5 --output-format lines
 ```
 
-### 3. Crawl all subdomains
-
-```bash
-python3 wordlister.py --url https://example.com --mode subdomain --depth 2 --threads 5
-```
-
-### 4. Use GoSpider results to generate wordlist
+### 3. Use GoSpider results to generate a wordlist
 
 ```bash
 # Run GoSpider first
