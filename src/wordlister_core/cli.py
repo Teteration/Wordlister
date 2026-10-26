@@ -1,6 +1,7 @@
 """Command-line interface for Wordlister."""
 
 import argparse
+import json
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -51,7 +52,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--output-format",
-        choices=("list", "lines"),
+        choices=("list", "lines", "json"),
         default="list",
         help="stdout format (default: list)",
     )
@@ -92,6 +93,16 @@ def _read_targets(args: argparse.Namespace) -> list[str]:
 def _render_result(result: WordlistResult, output_format: str) -> None:
     if output_format == "list":
         print(list(result.words))
+    elif output_format == "json":
+        payload = {
+            entry.word: {
+                "score": entry.score,
+                "sources": list(entry.sources),
+                "count": entry.count,
+            }
+            for entry in result.entries
+        }
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
         for word in result.words:
             print(word)

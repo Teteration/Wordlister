@@ -107,7 +107,7 @@ wordlister (--url URL | --input-file PATH) [OPTIONS]
 | `--filter ascii\|unicode` | Character policy | `unicode` |
 | `--drop-obfuscated` | Drop hex-like and opaque token values | off |
 | `--include-comments` | Include HTML comment candidates | off |
-| `--output-format list\|lines` | Machine-readable stdout format | `list` |
+| `--output-format list\|lines\|json` | Machine-readable stdout format | `list` |
 | `--connect-timeout SECONDS` | Connection timeout | `3.05` |
 | `--read-timeout SECONDS` | Read timeout | `10` |
 | `--max-response-bytes N` | Per-response download limit | `2097152` |
@@ -128,6 +128,47 @@ Wordlist data is written to **stdout**. Summaries and sanitized warnings are wri
 ```bash
 wordlister --url https://example.com --output-format lines > words.txt
 ```
+
+To include each word's total count, source-based score, and provenance labels:
+
+```bash
+wordlister --url https://example.com --output-format json | jq .
+```
+
+```json
+{
+  "resetPassword": {
+    "score": 10,
+    "sources": [
+      "form.action",
+      "javascript.fetch",
+      "json.key"
+    ],
+    "count": 4
+  }
+}
+```
+
+The `json` format is valid UTF-8 JSON on stdout and can be processed directly with `jq`. Summaries and warnings remain on stderr.
+
+`count` is the total number of extracted occurrences. `sources` contains unique, sorted extraction contexts such as `form.action`, `javascript.fetch`, and `json.key`. `score` is calculated from unique sources, not repetition count. For example, `form.action` (4) + `javascript.fetch` (4) + `json.key` (2) produces a score of 10.
+
+### Source provenance labels
+
+The current fixed source labels are:
+
+| Area | Sources |
+| --- | --- |
+| URL | `url.host`, `url.path`, `url.query.name`, `url.query.value`, `url.fragment` |
+| HTML | `html.text`, `html.attribute.name`, `html.comment`, `form.action`, `html.action`, `html.formaction`, `html.href`, `html.src`, `html.srcset`, `html.poster`, `html.data`, `html.data-api`, `html.data-endpoint`, `html.data-href`, `html.data-src`, `html.data-url` |
+| JSON | `json.key`, `json.value`, `json.url` |
+| JavaScript | `javascript.declaration`, `javascript.string`, `javascript.object_key`, `javascript.fetch`, `javascript.import`, `javascript.xhr.open`, `javascript.axios.get`, `javascript.axios.post`, `javascript.axios.put`, `javascript.axios.patch`, `javascript.axios.delete` |
+| Response headers | `header.name`, `header.location`, `header.cookie.name`, `header.cookie.path`, `header.cookie.domain`, `header.filename`, `header.value` |
+| Other textual responses | `response.text` |
+
+HTML attribute value labels are also generated dynamically as `html.<attribute-name>`, so inputs can produce labels such as `html.id`, `html.class`, `html.title`, `html.aria-label`, or other custom attribute names.
+
+Source weights are 4 for form actions and JavaScript request/import destinations; 3 for URL paths, queries, fragments, redirect and cookie-path URLs, JSON URLs, and HTML `href`/`src`/`srcset`/`poster`/`data-*` sources; 2 for structured names such as JSON keys, JavaScript declarations/object keys, and selected header or attribute names; and 1 for all other sources. Each unique source contributes its weight at most once per word.
 
 ## Safety model
 

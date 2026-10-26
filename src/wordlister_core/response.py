@@ -1,5 +1,6 @@
 """Dispatch bounded HTTP responses to format-specific extractors."""
 
+from wordlister_core.evidence import WordEvidence
 from wordlister_core.extractors.headers import extract_headers
 from wordlister_core.extractors.html import extract_html
 from wordlister_core.extractors.javascript import extract_javascript
@@ -16,15 +17,18 @@ def _content_type(response: FetchedResponse) -> str:
     return ""
 
 
-def extract_response(response: FetchedResponse, *, include_comments: bool) -> set[str]:
+def extract_response(response: FetchedResponse, *, include_comments: bool) -> WordEvidence:
     """Extract candidates from response metadata and a recognized textual body."""
 
-    words = extract_url(response.requested_url)
-    words.update(extract_url(response.final_url))
+    response_urls = dict.fromkeys(
+        (response.requested_url, *(hop.url for hop in response.history), response.final_url)
+    )
+    words = WordEvidence()
+    for url in response_urls:
+        words.update(extract_url(url))
     words.update(extract_headers(response.headers, response.final_url))
 
     for hop in response.history:
-        words.update(extract_url(hop.url))
         words.update(extract_headers(hop.headers, hop.url))
 
     content_type = _content_type(response)
@@ -49,6 +53,6 @@ def extract_response(response: FetchedResponse, *, include_comments: bool) -> se
         }
         or content_type.endswith("+xml")
     ):
-        words.update(tokenize(response.text))
+        words.add(tokenize(response.text), "response.text")
 
     return words

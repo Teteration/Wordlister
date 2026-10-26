@@ -52,9 +52,14 @@ class FakeFetcher:
             requested_url=url,
             final_url=url,
             status_code=200,
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "text/html"},
             history=(),
-            text='{"accountSettings": "profileDashboard"}',
+            text="""
+                <form action="/resetPassword/resetPassword"></form>
+                <script>fetch("/resetPassword")</script>
+                <script type="application/json">{"resetPassword": true}</script>
+                <p>accountSettings profileDashboard</p>
+            """,
         )
 
 
@@ -77,6 +82,23 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("accountSettings", result.words)
         self.assertIn("profileDashboard", result.words)
         self.assertEqual(2, result.processed_targets)
+
+    def test_preserves_counts_sources_and_source_based_score(self) -> None:
+        result = build_wordlist(
+            ["https://example.com/one"],
+            fetcher=FakeFetcher(),
+            extract_options=ExtractOptions(min_length=3),
+            workers=2,
+        )
+
+        entries = {entry.word: entry for entry in result.entries}
+        self.assertEqual(4, entries["resetPassword"].count)
+        self.assertEqual(10, entries["resetPassword"].score)
+        self.assertEqual(
+            ("form.action", "javascript.fetch", "json.key"),
+            entries["resetPassword"].sources,
+        )
+        self.assertEqual(1, entries["one"].count)
 
 
 if __name__ == "__main__":

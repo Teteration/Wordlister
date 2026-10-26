@@ -1,13 +1,21 @@
 """Concurrent orchestration with deterministic output and visible failures."""
 
+from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Protocol
 
 from wordlister_core.errors import FetchError, InvalidTargetError
+from wordlister_core.evidence import WordEvidence, score_sources
 from wordlister_core.http import sanitize_url, validate_http_url
-from wordlister_core.models import ExtractOptions, FetchedResponse, TargetFailure, WordlistResult
+from wordlister_core.models import (
+    ExtractOptions,
+    FetchedResponse,
+    TargetFailure,
+    WordInfo,
+    WordlistResult,
+)
 from wordlister_core.response import extract_response
-from wordlister_core.tokenizer import filter_words
+from wordlister_core.tokenizer import filter_word_counts
 
 
 class Fetcher(Protocol):
@@ -20,13 +28,17 @@ def _process_target(
     target: str,
     fetcher: Fetcher,
     options: ExtractOptions,
-) -> set[str]:
+) -> WordEvidence:
     response = fetcher.fetch(target)
     candidates = extract_response(
         response,
         include_comments=options.include_comments,
     )
-    return filter_words(candidates, options)
+    counts = filter_word_counts(candidates.counts, options)
+    return WordEvidence(
+        counts=counts,
+        sources={word: set(candidates.sources[word]) for word in counts},
+    )
 
 
 def build_wordlist(
@@ -42,7 +54,8 @@ def build_wordlist(
         raise ValueError("workers must be at least 1")
     options = extract_options or ExtractOptions()
     unique_targets = tuple(dict.fromkeys(target.strip() for target in targets if target.strip()))
-    words: set[str] = set()
+    word_counts: Counter[str] = Counter()
+    word_sources: defaultdict[str, set[str]] = defaultdict(set)
     failures: list[TargetFailure] = []
     valid_targets: list[str] = []
 
@@ -67,7 +80,10 @@ def build_wordlist(
         for future in as_completed(future_targets):
             target = future_targets[future]
             try:
-                words.update(future.result())
+                evidence = future.result()
+                word_counts.update(evidence.counts)
+                for word, sources in evidence.sources.items():
+                    word_sources[word].update(sources)
             except FetchError as error:
                 failures.append(
                     TargetFailure(
@@ -85,8 +101,18 @@ def build_wordlist(
                     )
                 )
 
+    words = tuple(sorted(word_counts))
     return WordlistResult(
-        words=tuple(sorted(words)),
+        words=words,
         failures=tuple(sorted(failures, key=lambda item: (item.target, item.code))),
         processed_targets=len(valid_targets),
+        entries=tuple(
+            WordInfo(
+                word=word,
+                count=word_counts[word],
+                score=score_sources(word_sources[word]),
+                sources=tuple(sorted(word_sources[word])),
+            )
+            for word in words
+        ),
     )

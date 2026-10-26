@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from http.cookies import CookieError, SimpleCookie
 from urllib.parse import urljoin
 
+from wordlister_core.evidence import WordEvidence
 from wordlister_core.extractors.url import extract_url
 from wordlister_core.tokenizer import tokenize
 
@@ -18,8 +19,8 @@ FILENAME_PATTERN = re.compile(r"filename\*?=(?:UTF-8''|\")?([^\";]+)", re.IGNORE
 REFRESH_URL_PATTERN = re.compile(r"(?:^|;)\s*url\s*=\s*(.+)$", re.IGNORECASE)
 
 
-def _extract_set_cookie(value: str, base_url: str) -> set[str]:
-    words: set[str] = set()
+def _extract_set_cookie(value: str, base_url: str) -> WordEvidence:
+    words = WordEvidence()
     cookie = SimpleCookie()
     try:
         cookie.load(value)
@@ -27,21 +28,23 @@ def _extract_set_cookie(value: str, base_url: str) -> set[str]:
         return words
 
     for morsel in cookie.values():
-        words.update(tokenize(morsel.key))
+        words.add(tokenize(morsel.key), "header.cookie.name")
         if morsel["path"]:
-            words.update(extract_url(urljoin(base_url, morsel["path"])))
+            words.update(
+                extract_url(urljoin(base_url, morsel["path"]), source="header.cookie.path")
+            )
         if morsel["domain"]:
-            words.update(tokenize(morsel["domain"]))
+            words.add(tokenize(morsel["domain"]), "header.cookie.domain")
     return words
 
 
-def extract_headers(headers: Mapping[str, str], base_url: str) -> set[str]:
+def extract_headers(headers: Mapping[str, str], base_url: str) -> WordEvidence:
     """Extract header names and allowlisted non-secret values."""
 
-    words: set[str] = set()
+    words = WordEvidence()
     for name, value in headers.items():
         lower_name = name.lower()
-        words.update(tokenize(name))
+        words.add(tokenize(name), "header.name")
 
         if lower_name == "set-cookie":
             words.update(_extract_set_cookie(value, base_url))
@@ -52,13 +55,13 @@ def extract_headers(headers: Mapping[str, str], base_url: str) -> set[str]:
                 if not match:
                     continue
                 candidate = match.group(1).strip(" '\"")
-            words.update(extract_url(urljoin(base_url, candidate)))
+            words.update(extract_url(urljoin(base_url, candidate), source="header.location"))
         elif lower_name == "content-disposition":
             match = FILENAME_PATTERN.search(value)
             if match:
-                words.update(tokenize(match.group(1)))
+                words.add(tokenize(match.group(1)), "header.filename")
         elif lower_name in TOKEN_LIST_HEADERS:
             for item in value.split(","):
-                words.update(tokenize(item.strip()))
+                words.add(tokenize(item.strip()), "header.value")
 
     return words

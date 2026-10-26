@@ -3,6 +3,7 @@
 import json
 from typing import Any
 
+from wordlister_core.evidence import WordEvidence
 from wordlister_core.extractors.url import extract_url
 from wordlister_core.tokenizer import is_opaque_value, is_sensitive_name, tokenize
 
@@ -11,15 +12,15 @@ MAX_JSON_NODES = 20_000
 MAX_STRING_LENGTH = 8 * 1024
 
 
-def extract_json_text(text: str, *, base_url: str = "") -> set[str]:
+def extract_json_text(text: str, *, base_url: str = "") -> WordEvidence:
     """Parse JSON and extract keys plus safe, human-meaningful string values."""
 
     try:
         payload = json.loads(text)
     except (json.JSONDecodeError, TypeError):
-        return set()
+        return WordEvidence()
 
-    words: set[str] = set()
+    words = WordEvidence()
     nodes_seen = 0
 
     def visit(value: Any, *, key: str | None = None, depth: int = 0) -> None:
@@ -31,7 +32,7 @@ def extract_json_text(text: str, *, base_url: str = "") -> set[str]:
         if isinstance(value, dict):
             for child_key, child_value in value.items():
                 key_text = str(child_key)
-                words.update(tokenize(key_text))
+                words.add(tokenize(key_text), "json.key")
                 visit(child_value, key=key_text, depth=depth + 1)
             return
 
@@ -45,11 +46,11 @@ def extract_json_text(text: str, *, base_url: str = "") -> set[str]:
         if is_opaque_value(value):
             return
         if value.startswith(("http://", "https://", "/", "./", "../")):
-            words.update(extract_url(urljoin_safe(base_url, value)))
+            words.update(extract_url(urljoin_safe(base_url, value), source="json.url"))
         elif key and is_sensitive_name(key):
             return
         else:
-            words.update(tokenize(value))
+            words.add(tokenize(value), "json.value")
 
     visit(payload)
     return words

@@ -60,6 +60,7 @@ class HtmlExtractorTests(unittest.TestCase):
             <script type="application/json">
               {"featureName": "securityDashboard", "csrfToken": "DoNotLeakCsrf123"}
             </script>
+            <script src="/assets/application.js"></script>
             <script>const reportEndpoint = "/api/reports/monthly-summary";</script>
           </body>
         </html>
@@ -86,10 +87,16 @@ class HtmlExtractorTests(unittest.TestCase):
                 "reportEndpoint",
                 "reports",
                 "monthly-summary",
+                "assets",
+                "application",
             }.issubset(words)
         )
         self.assertNotIn("DoNotLeakPassword123", words)
         self.assertNotIn("DoNotLeakCsrf123", words)
+        self.assertIn("form.action", words.sources["reset-password"])
+        self.assertIn("json.key", words.sources["featureName"])
+        self.assertIn("javascript.declaration", words.sources["reportEndpoint"])
+        self.assertIn("html.src", words.sources["application"])
 
 
 class JsonExtractorTests(unittest.TestCase):

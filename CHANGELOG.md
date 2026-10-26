@@ -11,6 +11,7 @@ All notable changes to this project are documented in this file. The format is b
 - Configurable HTTP timeouts, response-size limits, and redirect limits.
 - Deterministic failure reporting, tests, CI, ADRs, and contributor/security documentation.
 - Explicit documentation that no maintainer-approved license file is currently present.
+- Per-word occurrence counts, source provenance, source-based relevance scores, and JSON output suitable for `jq`.
 
 ### Changed
 

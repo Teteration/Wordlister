@@ -1,14 +1,29 @@
 import io
+import json
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from wordlister_core.cli import EXIT_ERROR, EXIT_PARTIAL, EXIT_SUCCESS, main
-from wordlister_core.models import TargetFailure, WordlistResult
+from wordlister_core.models import TargetFailure, WordInfo, WordlistResult
 
 
 class CliTests(unittest.TestCase):
+    def test_list_output_remains_backward_compatible(self) -> None:
+        result = WordlistResult(words=("account", "profile"), failures=(), processed_targets=1)
+        stdout = io.StringIO()
+
+        with (
+            patch("wordlister_core.cli.build_wordlist", return_value=result),
+            patch("sys.stdout", stdout),
+            patch("sys.stderr", io.StringIO()),
+        ):
+            exit_code = main(["--url", "https://example.com"])
+
+        self.assertEqual(EXIT_SUCCESS, exit_code)
+        self.assertEqual("['account', 'profile']\n", stdout.getvalue())
+
     def test_lines_output_keeps_stdout_machine_readable(self) -> None:
         result = WordlistResult(words=("account", "profile"), failures=(), processed_targets=1)
         stdout = io.StringIO()
@@ -49,6 +64,41 @@ class CliTests(unittest.TestCase):
         self.assertEqual(EXIT_PARTIAL, exit_code)
         self.assertIn("https://example.com/login?token", stderr.getvalue())
         self.assertNotIn("secret", stderr.getvalue())
+
+    def test_json_output_contains_score_sources_and_count(self) -> None:
+        result = WordlistResult(
+            words=("account",),
+            failures=(),
+            processed_targets=2,
+            entries=(
+                WordInfo(
+                    word="account",
+                    count=3,
+                    score=7,
+                    sources=("form.action", "url.path"),
+                ),
+            ),
+        )
+        stdout = io.StringIO()
+
+        with (
+            patch("wordlister_core.cli.build_wordlist", return_value=result),
+            patch("sys.stdout", stdout),
+            patch("sys.stderr", io.StringIO()),
+        ):
+            exit_code = main(["--url", "https://example.com", "--output-format", "json"])
+
+        self.assertEqual(EXIT_SUCCESS, exit_code)
+        self.assertEqual(
+            {
+                "account": {
+                    "score": 7,
+                    "sources": ["form.action", "url.path"],
+                    "count": 3,
+                }
+            },
+            json.loads(stdout.getvalue()),
+        )
 
     def test_input_file_ignores_comments_and_blank_lines(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
