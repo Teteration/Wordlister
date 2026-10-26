@@ -1,155 +1,185 @@
-# 🕷️ wordlister
+# Wordlister
 
-**Wordlister** is a Python tool that extracts target-specific keywords from web pages, HTML fields, URLs, and inline JavaScript.
-It can process one target page or a file of pre-crawled URLs (for example, output from GoSpider) and produce a clean, filtered wordlist for authorized penetration testing, recon, and fuzzing.
+[![CI](https://github.com/Teteration/Wordlister/actions/workflows/ci.yml/badge.svg)](https://github.com/Teteration/Wordlister/actions/workflows/ci.yml)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 
----
+Wordlister builds **target-specific wordlists** from URLs and bounded HTTP responses. It is designed for authorized reconnaissance and fuzzing workflows where generic dictionaries miss application-specific routes, parameters, field names, and identifiers.
 
-## 🔍 Where Does the Wordlist Come From?
+It does not ship with a dictionary and does not download third-party wordlists. Every output candidate comes from the targets you provide.
 
-Wordlister does **not** use a built-in dictionary and does not download a wordlist from a third-party source. It creates a new wordlist directly from the target URLs and the HTML returned by those URLs.
+> Use Wordlister only against systems you own or are explicitly authorized to test.
 
-For every URL it processes, Wordlister sends an HTTP request and extracts words from:
+## Highlights
 
-- **Visible page text** — headings, labels, buttons, messages, and other text contained in the HTML.
-- **HTML field attributes** — attribute values from `meta`, `input`, `select`, and `textarea` elements. These can reveal names such as `username`, `csrf_token`, or `redirect`.
-- **URL paths** — words found in paths such as `/account/reset-password`.
-- **Query-string names and values** — words from a URL such as `?action=reset&user=admin`.
-- **Linked resource URLs** — paths and query strings found in the `href` and `src` attributes of links, stylesheets, scripts, and images.
-- **Inline JavaScript variables** — variable names and values from simple `var`, `let`, and `const` assignments inside the page.
+- Extracts identifiers from URL hosts, paths, query strings, fragments, and nested URL values.
+- Splits `camelCase`, `PascalCase`, `snake_case`, `kebab-case`, dotted names, and mixed identifiers while retaining useful originals.
+- Parses HTML text, attributes, forms, linked resources, inline JavaScript, embedded JSON, and optional comments.
+- Parses JSON keys and safe string values recursively with depth and node limits.
+- Extracts selected response-header metadata and redirect paths without emitting cookie or authorization values.
+- Uses deterministic output, bounded downloads, explicit timeouts, same-origin redirects, and visible per-target failures.
+- Preserves the original `python3 wordlister.py` invocation while providing an installable `wordlister` command.
 
-The collected words are then:
-
-1. Deduplicated.
-2. Filtered by `--min-length` and `--max-length`.
-3. Optionally limited to ASCII with `--filter ascii`.
-4. Optionally stripped of hex-like values with `--drop-obfuscated`.
-5. Sorted before being printed as a Python-style list or one word per line.
-
-### URL input modes
-
-- With `--url`, the current version downloads and analyzes that single page.
-- With `--input-file`, each valid HTTP/HTTPS URL in the file is downloaded and analyzed. This is how results from GoSpider, Burp Suite, or another crawler can be converted into one target-specific wordlist.
-
-> **Current limitation:** `--mode` and `--depth` are accepted as command-line options, but recursive crawling is not implemented yet. External JavaScript files referenced through `src` are not downloaded for JavaScript parsing; only words in their URLs and inline JavaScript are processed.
-
----
-
-## 📦 Installation
-
-Install required dependencies:
+## Installation
 
 ```bash
-pip install -r requirements.txt
+git clone https://github.com/Teteration/Wordlister.git
+cd Wordlister
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e .
 ```
 
-Or manually:
+For development tools:
 
 ```bash
-pip install requests beautifulsoup4 tldextract
+python -m pip install -e '.[dev]'
 ```
 
----
-
-## 🛠 Usage
+The compatibility installation command is also supported:
 
 ```bash
-python3 wordlister.py [--url URL | --input-file PATH] [OPTIONS]
+python -m pip install -r requirements.txt
 ```
 
-### 🔧 Arguments
-
-| Option                   | Description                                                                 |
-|--------------------------|-----------------------------------------------------------------------------|
-| `--url`                  | Target URL to extract words from                                            |
-| `--input-file`           | Path to file containing list of URLs (e.g. from GoSpider)                   |
-| `--mode`                 | Reserved crawl mode option; currently does not change behavior              |
-| `--depth`                | Reserved crawl depth option; recursive crawling is not implemented yet      |
-| `--threads`              | Number of concurrent threads (default: `5`)                                 |
-| `--min-length`           | Minimum word length (default: `1`)                                          |
-| `--max-length`           | Maximum word length (default: `100`)                                        |
-| `--filter`               | Character filter: `ascii` or `unicode` (default: `unicode`)                 |
-| `--drop-obfuscated`      | Drop hex-like, meaningless values (e.g. `A1B2C3D4`)                          |
-| `--output-format`        | Output format: `list` (Python-style list) or `lines` (line-by-line)         |
-
----
-
-## 🧚 Examples
-
-### 1. Extract from a single page
+## Quick start
 
 ```bash
-python3 wordlister.py --url https://example.com --mode single --min-length 5 --max-length 12 --filter ascii --drop-obfuscated --output-format list
+wordlister --url https://example.com --output-format lines
 ```
 
-### 2. Process a prepared list of URLs
+Or run directly from the repository:
 
 ```bash
-python3 wordlister.py --input-file url.txt --threads 5 --output-format lines
+python3 wordlister.py --url https://example.com --output-format lines
 ```
 
-### 3. Use GoSpider results to generate a wordlist
+Analyze a prepared URL list:
 
 ```bash
-# Run GoSpider first
-
-gospider --site "https://example.com" --concurrent 5 --depth 5 | cut -d "-" -f 2|  grep sadadpsp | sort -u > url.txt
-
-# Then extract wordlist from url.txt
-
-python3 wordlister.py \
-  --input-file url.txt \
-  --threads 10 \
-  --min-length 5 \
-  --max-length 12 \
+wordlister \
+  --input-file urls.txt \
+  --threads 8 \
+  --min-length 4 \
+  --max-length 32 \
   --filter ascii \
   --drop-obfuscated \
-  --output-format list
+  --output-format lines
 ```
 
----
+Input files contain one HTTP/HTTPS URL per line. Blank lines and lines beginning with `#` are ignored.
 
-## 📂 Output Examples
+## Where the words come from
 
-### Output as Python List (`--output-format list`)
+| Source | Examples |
+| --- | --- |
+| Requested, redirected, and final URLs | host labels, path segments, filenames, query names, safe query values, fragments |
+| HTML text | headings, labels, buttons, validation messages |
+| HTML attributes | `id`, `class`, `name`, `placeholder`, `aria-*`, `data-*`, form actions, linked URLs |
+| Embedded JSON | object keys, safe string values, relative and absolute URL values |
+| Inline JavaScript | variable names, simple string assignments, object keys, `fetch`/Axios/import URLs |
+| Response headers | redirect locations, cookie names and paths, filenames, allowed/exposed header names |
+| HTML comments | optional with `--include-comments` |
 
-```python
-['Submit', 'Payment', 'Account', 'Password', 'Reset']
+The tokenizer retains application identifiers and adds useful components:
+
+```text
+resetPassword  -> resetPassword, reset, Password
+user_profile   -> user_profile, user, profile
+report-v2.json -> report-v2.json, report-v2, report, v2, json
 ```
 
-### Output Line-by-Line (`--output-format lines`)
+Candidates are deduplicated, filtered, and sorted before output.
 
-```
-Submit
-Payment
-Account
-Password
-Reset
+## CLI reference
+
+```text
+wordlister (--url URL | --input-file PATH) [OPTIONS]
 ```
 
----
+| Option | Purpose | Default |
+| --- | --- | --- |
+| `--url URL` | Analyze one HTTP/HTTPS target | — |
+| `--input-file PATH` | Analyze URLs listed in a UTF-8 text file | — |
+| `--threads N` | Concurrent top-level targets | `5` |
+| `--min-length N` | Minimum output word length | `1` |
+| `--max-length N` | Maximum output word length | `100` |
+| `--filter ascii\|unicode` | Character policy | `unicode` |
+| `--drop-obfuscated` | Drop hex-like and opaque token values | off |
+| `--include-comments` | Include HTML comment candidates | off |
+| `--output-format list\|lines` | Machine-readable stdout format | `list` |
+| `--connect-timeout SECONDS` | Connection timeout | `3.05` |
+| `--read-timeout SECONDS` | Read timeout | `10` |
+| `--max-response-bytes N` | Per-response download limit | `2097152` |
+| `--max-redirects N` | Same-origin redirect limit | `5` |
 
-## 🔐 Use Cases
+`--mode` and `--depth` remain accepted for compatibility with earlier releases, but are deprecated and do not enable crawling.
 
-- Build wordlists for directory/file fuzzing (e.g. with `ffuf`, `dirsearch`)
-- Discover hidden parameters, forms, JS variables
-- Recon for bug bounty / red teaming
-- Use external crawlers like GoSpider and process their URL results
+### Exit codes and streams
 
----
+| Code | Meaning |
+| --- | --- |
+| `0` | All selected targets completed |
+| `1` | Invalid configuration or unusable input |
+| `2` | A wordlist was produced, but one or more targets failed |
 
-## ⚠️ Legal Notice
+Wordlist data is written to **stdout**. Summaries and sanitized warnings are written to **stderr**:
 
-Use this tool only on systems and domains you are authorized to test.
+```bash
+wordlister --url https://example.com --output-format lines > words.txt
+```
 
----
+## Safety model
 
-## 🧠 Credits
+- Only exact `http` and `https` schemes are accepted.
+- URLs containing embedded credentials are rejected.
+- Redirects are limited and restricted to the same origin; a same-host HTTP-to-HTTPS upgrade is allowed.
+- Environment proxy and `.netrc` discovery are disabled by default.
+- Each response has connect/read timeouts and a decoded body-size limit.
+- Contextual secret values and common opaque token formats are excluded where possible.
+- Diagnostic URLs omit fragments, credentials, and query values.
 
-Developed by a security researcher focused on automation, recon, and red teaming.
+Generated wordlists can still contain target-specific business terms and should be handled as assessment artifacts.
 
----
+## Architecture
 
-## 📜 License
+```text
+CLI
+ └── pipeline (deduplication, concurrency, deterministic aggregation)
+      ├── HTTP client (validation, redirects, limits, sanitized errors)
+      └── response dispatcher
+           ├── URL / HTML / JSON / JavaScript / header extractors
+           └── tokenizer and final filters
+```
 
-MIT License – use freely, modify, and contribute.
+The implementation uses a `src/` layout. Extractors are pure functions where possible, while HTTP transport, CLI rendering, and concurrency are isolated. See [`docs/decisions/0001-modular-extraction-pipeline.md`](docs/decisions/0001-modular-extraction-pipeline.md) for the rationale.
+
+## Development
+
+```bash
+PYTHONPATH=src python -m unittest discover -s tests -v
+ruff check .
+ruff format --check .
+python -m build
+```
+
+The tests do not require live network access.
+
+## Current limitations
+
+- Wordlister processes the supplied URL or URL list; it is not a recursive crawler.
+- External JavaScript and CSS assets are not downloaded for secondary analysis.
+- JavaScript extraction is best-effort and does not implement a full parser.
+- XML/SVG bodies currently use generic text tokenization.
+- The current CLI performs GET requests only.
+
+## Project governance
+
+- [Contributing guide](CONTRIBUTING.md)
+- [Security policy](SECURITY.md)
+- [Changelog](CHANGELOG.md)
+- [Architecture decisions](docs/decisions/)
+
+## License status
+
+The repository does not currently contain a maintainer-approved license file. Until the copyright holder adds one, no open-source license is asserted by this project metadata.
