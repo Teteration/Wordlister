@@ -75,9 +75,20 @@ class TargetFailure:
 
 
 @dataclass(frozen=True, slots=True)
+class WordInfo:
+    """A word's occurrence count, source-based score, and provenance labels."""
+
+    word: str
+    count: int
+    score: int
+    sources: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class WordlistResult:
     """Aggregated words and failures for a single pipeline run."""
 
     words: tuple[str, ...]
     failures: tuple[TargetFailure, ...]
     processed_targets: int
+    entries: tuple[WordInfo, ...] = ()

@@ -39,6 +39,14 @@ class TokenizerTests(unittest.TestCase):
         self.assertTrue(is_opaque_value("-----BEGIN PRIVATE KEY-----"))
         self.assertFalse(is_opaque_value("resetPasswordEndpoint"))
 
+    def test_counts_repeated_words_without_double_counting_identifier_parts(self) -> None:
+        words = tokenize("account account resetPassword")
+
+        self.assertEqual(2, words["account"])
+        self.assertEqual(1, words["resetPassword"])
+        self.assertEqual(1, words["reset"])
+        self.assertEqual(1, words["Password"])
+
 
 if __name__ == "__main__":
     unittest.main()

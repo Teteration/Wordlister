@@ -54,19 +54,20 @@ def _identifier_parts(value: str) -> list[str]:
     return parts
 
 
-def tokenize(text: str) -> set[str]:
-    """Keep useful original lexemes and add identifier components."""
+def tokenize(text: str) -> Counter[str]:
+    """Count original lexemes and identifier components once per occurrence."""
 
-    words: set[str] = set()
+    words: Counter[str] = Counter()
     for match in LEXEME_PATTERN.finditer(text):
         lexeme = match.group(0)
-        words.add(lexeme)
-        words.update(part for part in _identifier_parts(lexeme) if part)
+        occurrence = {lexeme}
+        occurrence.update(part for part in _identifier_parts(lexeme) if part)
         if "." in lexeme:
             stem = lexeme.rsplit(".", maxsplit=1)[0]
             if stem:
-                words.add(stem)
-                words.update(part for part in _identifier_parts(stem) if part)
+                occurrence.add(stem)
+                occurrence.update(part for part in _identifier_parts(stem) if part)
+        words.update(occurrence)
     return words
 
 
@@ -134,3 +135,10 @@ def filter_words(words: Iterable[str], options: "ExtractOptions") -> set[str]:
             continue
         filtered.add(word)
     return filtered
+
+
+def filter_word_counts(words: Counter[str], options: "ExtractOptions") -> Counter[str]:
+    """Apply output filters while preserving occurrence counts."""
+
+    allowed = filter_words(words, options)
+    return Counter({word: count for word, count in words.items() if word in allowed})
