@@ -10,12 +10,7 @@ from wordlister_core.extractors.url import extract_url
 from wordlister_core.tokenizer import tokenize
 
 URL_HEADERS = {"content-location", "location", "refresh"}
-TOKEN_LIST_HEADERS = {
-    "access-control-allow-headers",
-    "access-control-expose-headers",
-    "allow",
-}
-FILENAME_PATTERN = re.compile(r"filename\*?=(?:UTF-8''|\")?([^\";]+)", re.IGNORECASE)
+TOKEN_LIST_HEADERS = {"access-control-allow-headers"}
 REFRESH_URL_PATTERN = re.compile(r"(?:^|;)\s*url\s*=\s*(.+)$", re.IGNORECASE)
 
 
@@ -33,8 +28,6 @@ def _extract_set_cookie(value: str, base_url: str) -> WordEvidence:
             words.update(
                 extract_url(urljoin(base_url, morsel["path"]), source="header.cookie.path")
             )
-        if morsel["domain"]:
-            words.add(tokenize(morsel["domain"]), "header.cookie.domain")
     return words
 
 
@@ -44,7 +37,6 @@ def extract_headers(headers: Mapping[str, str], base_url: str) -> WordEvidence:
     words = WordEvidence()
     for name, value in headers.items():
         lower_name = name.lower()
-        words.add(tokenize(name), "header.name")
 
         if lower_name == "set-cookie":
             words.update(_extract_set_cookie(value, base_url))
@@ -56,10 +48,6 @@ def extract_headers(headers: Mapping[str, str], base_url: str) -> WordEvidence:
                     continue
                 candidate = match.group(1).strip(" '\"")
             words.update(extract_url(urljoin(base_url, candidate), source="header.location"))
-        elif lower_name == "content-disposition":
-            match = FILENAME_PATTERN.search(value)
-            if match:
-                words.add(tokenize(match.group(1)), "header.filename")
         elif lower_name in TOKEN_LIST_HEADERS:
             for item in value.split(","):
                 words.add(tokenize(item.strip()), "header.value")

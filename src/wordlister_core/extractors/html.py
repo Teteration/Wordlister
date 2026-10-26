@@ -3,28 +3,25 @@
 from collections.abc import Iterable
 from urllib.parse import urljoin
 
-from bs4 import BeautifulSoup, Comment, Tag
+from bs4 import BeautifulSoup, Comment
 
 from wordlister_core.evidence import WordEvidence
 from wordlister_core.extractors.javascript import extract_javascript
 from wordlister_core.extractors.json_data import extract_json_text
 from wordlister_core.extractors.url import extract_url
-from wordlister_core.tokenizer import is_opaque_value, is_sensitive_name, tokenize
+from wordlister_core.tokenizer import is_opaque_value, tokenize
 
-URL_ATTRIBUTES = {
-    "action",
-    "data",
-    "data-api",
-    "data-endpoint",
-    "data-href",
-    "data-src",
-    "data-url",
-    "formaction",
-    "href",
-    "poster",
-    "src",
+FORM_FIELD_TAGS = {"button", "input", "select", "textarea"}
+ENDPOINT_ATTRIBUTES: dict[str, set[str] | None] = {
+    "action": {"form"},
+    "formaction": {"button", "input"},
+    "href": {"a", "area"},
+    "src": {"frame", "iframe"},
+    "data-api": None,
+    "data-endpoint": None,
+    "data-href": None,
+    "data-url": None,
 }
-SKIPPED_VALUE_ATTRIBUTES = {"integrity", "nonce", "style"}
 
 
 def _attribute_values(value: object) -> Iterable[str]:
@@ -33,53 +30,43 @@ def _attribute_values(value: object) -> Iterable[str]:
     return (str(value),)
 
 
-def _extract_srcset(value: str, base_url: str) -> WordEvidence:
-    words = WordEvidence()
-    for entry in value.split(","):
-        candidate = entry.strip().split(maxsplit=1)[0]
-        if candidate:
-            words.update(extract_url(urljoin(base_url, candidate), source="html.srcset"))
-    return words
+def _is_endpoint_reference(value: str) -> bool:
+    """Reject browser-only and non-HTTP link schemes before URL extraction."""
+
+    lowered = value.strip().lower()
+    return bool(lowered) and not lowered.startswith(
+        ("#", "data:", "javascript:", "mailto:", "tel:")
+    )
 
 
-def _tag_has_sensitive_value(tag: Tag) -> bool:
-    field_name = str(tag.attrs.get("name", ""))
-    field_type = str(tag.attrs.get("type", ""))
-    return field_type.lower() in {"password", "hidden"} or is_sensitive_name(field_name)
-
-
-def extract_html(html: str, base_url: str, *, include_comments: bool = False) -> WordEvidence:
-    """Extract visible text, attributes, linked URLs, JSON, JS, and optional comments."""
+def extract_html(
+    html: str,
+    base_url: str,
+    *,
+    include_comments: bool = False,
+) -> WordEvidence:
+    """Extract backend input names and endpoint references from HTML."""
 
     soup = BeautifulSoup(html, "html.parser")
-    text_soup = BeautifulSoup(html, "html.parser")
-    for element in text_soup(["script", "style"]):
-        element.extract()
     words = WordEvidence()
-    words.add(tokenize(text_soup.get_text(" ", strip=True)), "html.text")
 
     for tag in soup.find_all(True):
-        sensitive_value = _tag_has_sensitive_value(tag)
+        if tag.name in FORM_FIELD_TAGS and "name" in tag.attrs:
+            for value in _attribute_values(tag.attrs["name"]):
+                if value and not is_opaque_value(value):
+                    words.add(tokenize(value), "form.field.name")
+
         for name, raw_value in tag.attrs.items():
-            words.add(tokenize(name), "html.attribute.name")
-            if name in SKIPPED_VALUE_ATTRIBUTES:
+            allowed_tags = ENDPOINT_ATTRIBUTES.get(name, set())
+            if allowed_tags == set() or (allowed_tags is not None and tag.name not in allowed_tags):
                 continue
             for value in _attribute_values(raw_value):
-                if not value or is_opaque_value(value):
+                if not _is_endpoint_reference(value) or is_opaque_value(value):
                     continue
-                if name == "value" and sensitive_value:
-                    continue
-                if is_sensitive_name(name):
-                    continue
-                if name == "srcset":
-                    words.update(_extract_srcset(value, base_url))
-                elif name in URL_ATTRIBUTES:
-                    source = (
-                        "form.action" if tag.name == "form" and name == "action" else f"html.{name}"
-                    )
-                    words.update(extract_url(urljoin(base_url, value), source=source))
-                else:
-                    words.add(tokenize(value), f"html.{name}")
+                source = (
+                    "form.action" if tag.name == "form" and name == "action" else f"html.{name}"
+                )
+                words.update(extract_url(urljoin(base_url, value), source=source))
 
     for script in soup.find_all("script"):
         source = script.string or script.get_text()

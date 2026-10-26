@@ -19,6 +19,9 @@ All notable changes to this project are documented in this file. The format is b
 - Kept `python3 wordlister.py` as a compatibility launcher.
 - Moved summaries and warnings to stderr so stdout remains machine-readable.
 - Deprecated the non-functional `--mode` and `--depth` options while retaining compatibility.
+- Removed low-signal visible HTML and unstructured response text from extraction.
+- Focused default extraction on backend routes and input names, excluding presentation attributes, generic JSON/JavaScript values, host labels, fragments, static assets, and generic response-header metadata.
+- Dropped candidates containing Persian or other Arabic-script letters, including mixed identifiers.
 
 ### Security
 

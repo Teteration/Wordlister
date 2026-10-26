@@ -2,6 +2,7 @@
 
 import math
 import re
+import unicodedata
 from collections import Counter
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
@@ -14,6 +15,15 @@ IDENTIFIER_PART_PATTERN = re.compile(r"[A-Z]+(?=[A-Z][a-z]|$)|[A-Z]?[a-z]+|[A-Z]
 SEPARATOR_PATTERN = re.compile(r"[_\-.:/\\]+")
 JWT_PATTERN = re.compile(r"^[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}$")
 HEX_PATTERN = re.compile(r"^[A-Fa-f0-9]{16,}$")
+ARABIC_SCRIPT_RANGES = (
+    (0x0600, 0x06FF),
+    (0x0750, 0x077F),
+    (0x0870, 0x089F),
+    (0x08A0, 0x08FF),
+    (0xFB50, 0xFDFF),
+    (0xFE70, 0xFEFF),
+    (0x1EE00, 0x1EEFF),
+)
 
 SENSITIVE_COMPONENTS = {
     "apikey",
@@ -54,12 +64,24 @@ def _identifier_parts(value: str) -> list[str]:
     return parts
 
 
+def _contains_arabic_script_letter(value: str) -> bool:
+    """Detect Persian/Arabic-script letters while ignoring digits and punctuation."""
+
+    return any(
+        unicodedata.category(character).startswith("L")
+        and any(start <= ord(character) <= end for start, end in ARABIC_SCRIPT_RANGES)
+        for character in value
+    )
+
+
 def tokenize(text: str) -> Counter[str]:
     """Count original lexemes and identifier components once per occurrence."""
 
     words: Counter[str] = Counter()
     for match in LEXEME_PATTERN.finditer(text):
         lexeme = match.group(0)
+        if _contains_arabic_script_letter(lexeme):
+            continue
         occurrence = {lexeme}
         occurrence.update(part for part in _identifier_parts(lexeme) if part)
         if "." in lexeme:
@@ -126,6 +148,8 @@ def filter_words(words: Iterable[str], options: "ExtractOptions") -> set[str]:
     filtered: set[str] = set()
     for word in words:
         if word.isdigit() or not options.min_length <= len(word) <= options.max_length:
+            continue
+        if _contains_arabic_script_letter(word):
             continue
         if options.character_filter == "ascii" and not _is_ascii(word):
             continue

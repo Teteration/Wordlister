@@ -7,7 +7,6 @@ from wordlister_core.extractors.javascript import extract_javascript
 from wordlister_core.extractors.json_data import extract_json_text
 from wordlister_core.extractors.url import extract_url
 from wordlister_core.models import FetchedResponse
-from wordlister_core.tokenizer import tokenize
 
 
 def _content_type(response: FetchedResponse) -> str:
@@ -17,7 +16,11 @@ def _content_type(response: FetchedResponse) -> str:
     return ""
 
 
-def extract_response(response: FetchedResponse, *, include_comments: bool) -> WordEvidence:
+def extract_response(
+    response: FetchedResponse,
+    *,
+    include_comments: bool,
+) -> WordEvidence:
     """Extract candidates from response metadata and a recognized textual body."""
 
     response_urls = dict.fromkeys(
@@ -44,15 +47,5 @@ def extract_response(response: FetchedResponse, *, include_comments: bool) -> Wo
                 include_comments=include_comments,
             )
         )
-    elif (
-        content_type.startswith("text/")
-        or content_type
-        in {
-            "application/xml",
-            "image/svg+xml",
-        }
-        or content_type.endswith("+xml")
-    ):
-        words.add(tokenize(response.text), "response.text")
 
     return words

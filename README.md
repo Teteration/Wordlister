@@ -13,8 +13,8 @@ It does not ship with a dictionary and does not download third-party wordlists. 
 
 - Extracts identifiers from URL hosts, paths, query strings, fragments, and nested URL values.
 - Splits `camelCase`, `PascalCase`, `snake_case`, `kebab-case`, dotted names, and mixed identifiers while retaining useful originals.
-- Parses HTML text, attributes, forms, linked resources, inline JavaScript, embedded JSON, and optional comments.
-- Parses JSON keys and safe string values recursively with depth and node limits.
+- Extracts backend-oriented form fields, endpoint references, request parameters, and optional comments from HTML and JavaScript.
+- Parses JSON keys and URL-shaped values recursively with depth and node limits.
 - Extracts selected response-header metadata and redirect paths without emitting cookie or authorization values.
 - Uses deterministic output, bounded downloads, explicit timeouts, same-origin redirects, and visible per-target failures.
 - Preserves the original `python3 wordlister.py` invocation while providing an installable `wordlister` command.
@@ -73,12 +73,11 @@ Input files contain one HTTP/HTTPS URL per line. Blank lines and lines beginning
 
 | Source | Examples |
 | --- | --- |
-| Requested, redirected, and final URLs | host labels, path segments, filenames, query names, safe query values, fragments |
-| HTML text | headings, labels, buttons, validation messages |
-| HTML attributes | `id`, `class`, `name`, `placeholder`, `aria-*`, `data-*`, form actions, linked URLs |
-| Embedded JSON | object keys, safe string values, relative and absolute URL values |
-| Inline JavaScript | variable names, simple string assignments, object keys, `fetch`/Axios/import URLs |
-| Response headers | redirect locations, cookie names and paths, filenames, allowed/exposed header names |
+| Requested, redirected, and final URLs | route segments, query parameter names, and nested URL routes |
+| HTML forms and endpoint attributes | field names, form actions, navigational links, iframe URLs, and explicit `data-api`/`data-endpoint`/`data-url` references |
+| Embedded JSON | object keys and relative or absolute URL values |
+| Inline JavaScript | request URLs and parameters in request payloads, `FormData`, and `URLSearchParams` |
+| Response headers | redirect routes, cookie names and paths, and CORS-allowed request-header names |
 | HTML comments | optional with `--include-comments` |
 
 The tokenizer retains application identifiers and adds useful components:
@@ -90,6 +89,7 @@ report-v2.json -> report-v2.json, report-v2, report, v2, json
 ```
 
 Candidates are deduplicated, filtered, and sorted before output.
+Candidates containing Persian or other Arabic-script letters are discarded, including mixed identifiers, because they are unlikely to be backend parameter names in the intended fuzzing workflow. Other Unicode scripts remain subject to the selected `--filter` policy.
 
 ## CLI reference
 
@@ -159,16 +159,15 @@ The current fixed source labels are:
 
 | Area | Sources |
 | --- | --- |
-| URL | `url.host`, `url.path`, `url.query.name`, `url.query.value`, `url.fragment` |
-| HTML | `html.text`, `html.attribute.name`, `html.comment`, `form.action`, `html.action`, `html.formaction`, `html.href`, `html.src`, `html.srcset`, `html.poster`, `html.data`, `html.data-api`, `html.data-endpoint`, `html.data-href`, `html.data-src`, `html.data-url` |
-| JSON | `json.key`, `json.value`, `json.url` |
-| JavaScript | `javascript.declaration`, `javascript.string`, `javascript.object_key`, `javascript.fetch`, `javascript.import`, `javascript.xhr.open`, `javascript.axios.get`, `javascript.axios.post`, `javascript.axios.put`, `javascript.axios.patch`, `javascript.axios.delete` |
-| Response headers | `header.name`, `header.location`, `header.cookie.name`, `header.cookie.path`, `header.cookie.domain`, `header.filename`, `header.value` |
-| Other textual responses | `response.text` |
+| URL | `url.path`, `url.query.name`, `url.query.url` |
+| HTML | `html.comment` (opt-in), `form.field.name`, `form.action`, `html.formaction`, `html.href`, `html.src`, `html.data-api`, `html.data-endpoint`, `html.data-href`, `html.data-url` |
+| JSON | `json.key`, `json.url` |
+| JavaScript | `javascript.url`, `javascript.parameter`, `javascript.fetch`, `javascript.xhr.open`, `javascript.axios.get`, `javascript.axios.post`, `javascript.axios.put`, `javascript.axios.patch`, `javascript.axios.delete` |
+| Response headers | `header.location`, `header.cookie.name`, `header.cookie.path`, `header.value` |
 
-HTML attribute value labels are also generated dynamically as `html.<attribute-name>`, so inputs can produce labels such as `html.id`, `html.class`, `html.title`, `html.aria-label`, or other custom attribute names.
+Source weights are 4 for form field names, query names, cookie names, CORS-allowed request-header names, explicit form/data endpoints, and JavaScript request parameters or destinations; 3 for other route-like URL sources; 2 for JSON keys; and 1 for optional comment sources. Each unique source contributes its weight at most once per word.
 
-Source weights are 4 for form actions and JavaScript request/import destinations; 3 for URL paths, queries, fragments, redirect and cookie-path URLs, JSON URLs, and HTML `href`/`src`/`srcset`/`poster`/`data-*` sources; 2 for structured names such as JSON keys, JavaScript declarations/object keys, and selected header or attribute names; and 1 for all other sources. Each unique source contributes its weight at most once per word.
+Visible HTML prose, `class`/`id`/presentation attributes, arbitrary JSON string values, generic JavaScript variable names, host labels, fragments, static image/script assets, and generic response-header names are not extracted. They tend to describe the frontend rather than accepted backend input.
 
 ## Safety model
 

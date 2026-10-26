@@ -1,4 +1,4 @@
-"""Extract target-specific candidates from HTTP URLs."""
+"""Extract backend-oriented paths and parameter names from HTTP URLs."""
 
 from urllib.parse import parse_qsl, unquote, urljoin, urlparse
 
@@ -9,14 +9,10 @@ MAX_NESTED_URL_DEPTH = 2
 
 
 def extract_url(url: str, *, source: str | None = None, _depth: int = 0) -> WordEvidence:
-    """Extract host, path, query, and fragment identifiers from a URL."""
+    """Extract route segments, query names, and nested URL routes."""
 
     words = WordEvidence()
     parsed = urlparse(url)
-
-    if parsed.hostname:
-        for label in parsed.hostname.split("."):
-            words.add(tokenize(unquote(label)), source or "url.host")
 
     for segment in parsed.path.split("/"):
         if segment:
@@ -37,14 +33,9 @@ def extract_url(url: str, *, source: str | None = None, _depth: int = 0) -> Word
             words.update(
                 extract_url(
                     urljoin(url, value),
-                    source=source or "url.query.value",
+                    source=source or "url.query.url",
                     _depth=_depth + 1,
                 )
             )
-        else:
-            words.add(tokenize(value), source or "url.query.value")
-
-    if parsed.fragment:
-        words.add(tokenize(unquote(parsed.fragment)), source or "url.fragment")
 
     return words
