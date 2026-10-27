@@ -19,13 +19,13 @@ The repository must remain approachable as a small Python security tool and keep
 Use a `src/wordlister_core` package with this dependency flow:
 
 ```text
-CLI -> optional discovery adapter -> pipeline -> HTTP client + response dispatcher -> extractors -> tokenizer
+CLI -> Burp history importer + optional Katana adapter -> pipeline -> HTTP client + response dispatcher -> extractors -> tokenizer
 ```
 
 - Extractors are pure functions wherever practical.
 - The HTTP client owns URL validation, redirects, timeouts, size limits, and safe errors.
 - The pipeline owns per-run deduplication, concurrency, aggregation, and deterministic ordering.
-- The optional discovery adapter owns external crawler execution and treats its output as untrusted input that must be revalidated, normalized, scoped, filtered, and bounded before entering the pipeline.
+- The discovery layer owns Burp history imports and external crawler execution. All URLs are treated as untrusted input that must be revalidated, normalized, scoped, filtered, prioritized, and bounded before entering the pipeline.
 - External crawlers run without a shell or inherited proxy variables, with bounded output and an explicit timeout.
 - The CLI owns argument parsing, rendering, and exit codes.
 - `wordlister.py` remains a thin source-checkout launcher.
@@ -43,7 +43,7 @@ Rejected as premature. The current formats need clear functions and a dispatcher
 
 ### Implement and maintain a recursive crawler internally
 
-Rejected because link discovery, traversal, and crawler-specific edge cases are not Wordlister's primary responsibility. A narrow adapter to an established external crawler keeps Wordlister focused on bounded fetching, backend-oriented extraction, provenance, and scoring.
+Rejected because link discovery, traversal, and crawler-specific edge cases are not Wordlister's primary responsibility. A narrow Katana adapter plus a passive Burp history importer keeps Wordlister focused on bounded fetching, backend-oriented extraction, provenance, and scoring.
 
 ### Remove the legacy script
 
@@ -63,9 +63,9 @@ Rejected for now because existing users may invoke `python3 wordlister.py`. The 
 - The project has more files than the original prototype.
 - The public project name and internal import package differ.
 - Full request-lifecycle changes may span several modules.
-- External discovery requires an independently installed executable and performs a separate network pass before Wordlister fetches selected URLs.
+- Katana discovery requires an independently installed executable and performs a separate network pass before Wordlister fetches selected URLs; Burp imports are passive.
 - Selected pages are requested twice: once by the discovery provider and once by Wordlister's own HTTP client for extraction.
-- Discovery does not execute browser JavaScript, so client-rendered-only routes may remain invisible.
+- Standard Katana JavaScript parsing does not provide full browser execution, so client-rendered-only routes may remain invisible unless captured in Burp history.
 
 ## Follow-up
 

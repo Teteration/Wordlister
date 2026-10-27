@@ -1,23 +1,30 @@
-"""Optional URL discovery through external crawler adapters."""
+"""Untrusted URL discovery through Burp history imports and Katana."""
 
+import base64
+import binascii
 import json
 import os
+import re
 import subprocess
 import tempfile
 import time
-from collections.abc import Sequence
+import xml.etree.ElementTree as ET
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from ipaddress import ip_address
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Protocol
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urljoin, urlparse, urlunparse
 
 from wordlister_core.errors import InvalidTargetError, WordlisterError
 from wordlister_core.http import validate_http_url
 from wordlister_core.models import DiscoveryOptions
 
-MAX_CRAWLER_OUTPUT_BYTES = 32 * 1024 * 1024
-MAX_CRAWLER_ERROR_BYTES = 64 * 1024
+MAX_DISCOVERY_OUTPUT_BYTES = 32 * 1024 * 1024
+MAX_DISCOVERY_ERROR_BYTES = 64 * 1024
+MAX_BURP_HISTORY_BYTES = 128 * 1024 * 1024
+MAX_BURP_HISTORY_ITEMS = 1_000_000
+MAX_BURP_REQUEST_BYTES = 2 * 1024 * 1024
 PROXY_ENVIRONMENT_KEYS = {
     "ALL_PROXY",
     "HTTP_PROXY",
@@ -156,66 +163,80 @@ def _safe_subprocess_environment() -> dict[str, str]:
     return {key: value for key, value in os.environ.items() if key not in PROXY_ENVIRONMENT_KEYS}
 
 
-def _execute_hakrawler(command: list[str], seed: str, timeout: int) -> _ProcessResult:
-    """Execute hakrawler without a shell while keeping captured output off the Python heap."""
+def _katana_scope_pattern(seed: str, mode: str) -> str:
+    parsed = urlparse(seed)
+    hostname = parsed.hostname or ""
+    host_pattern = re.escape(hostname)
+    if mode == "subdomain":
+        try:
+            ip_address(hostname)
+        except ValueError:
+            host_pattern = rf"(?:[^/?#.]+\.)*{host_pattern}"
 
-    with (
-        tempfile.TemporaryFile() as stdin_file,
-        tempfile.TemporaryFile() as stdout_file,
-        tempfile.TemporaryFile() as stderr_file,
-    ):
-        stdin_file.write(f"{seed}\n".encode())
-        stdin_file.seek(0)
+    scheme = parsed.scheme.lower()
+    port = _effective_port(seed)
+    if scheme == "http" and port == 80:
+        origin_pattern = rf"(?:http://{host_pattern}(?::80)?|https://{host_pattern}(?::443)?)"
+    elif (scheme, port) == ("https", 443):
+        origin_pattern = rf"https://{host_pattern}(?::443)?"
+    else:
+        origin_pattern = rf"{re.escape(scheme)}://{host_pattern}:{port}"
+    return rf"^{origin_pattern}(?:[/?#]|$)"
+
+
+def _execute_katana(command: list[str], timeout: int) -> _ProcessResult:
+    """Execute Katana without a shell and terminate it when resource limits are crossed."""
+
+    with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
         try:
             process = subprocess.Popen(
                 command,
-                stdin=stdin_file,
+                stdin=subprocess.DEVNULL,
                 stdout=stdout_file,
                 stderr=stderr_file,
                 env=_safe_subprocess_environment(),
             )
         except FileNotFoundError as error:
             raise WordlisterError(
-                "hakrawler executable was not found; install it with "
-                "'go install github.com/hakluke/hakrawler@latest'"
+                "katana executable was not found; install it with "
+                "'go install github.com/projectdiscovery/katana/cmd/katana@latest'"
             ) from error
         except OSError as error:
-            raise WordlisterError("hakrawler could not be started") from error
+            raise WordlisterError("katana could not be started") from error
 
-        deadline = time.monotonic() + timeout + 5
+        deadline = time.monotonic() + timeout
         while process.poll() is None:
             if time.monotonic() >= deadline:
                 process.kill()
                 process.wait()
-                raise WordlisterError("hakrawler exceeded the configured crawler timeout")
-            if os.fstat(stdout_file.fileno()).st_size > MAX_CRAWLER_OUTPUT_BYTES:
+                raise WordlisterError("katana exceeded the configured crawler timeout")
+            if os.fstat(stdout_file.fileno()).st_size > MAX_DISCOVERY_OUTPUT_BYTES:
                 process.kill()
                 process.wait()
-                raise WordlisterError("hakrawler output exceeded the supported size limit")
-            if os.fstat(stderr_file.fileno()).st_size > MAX_CRAWLER_ERROR_BYTES:
+                raise WordlisterError("katana output exceeded the supported size limit")
+            if os.fstat(stderr_file.fileno()).st_size > MAX_DISCOVERY_ERROR_BYTES:
                 process.kill()
                 process.wait()
-                raise WordlisterError(
-                    "hakrawler diagnostic output exceeded the supported size limit"
-                )
+                raise WordlisterError("katana diagnostic output exceeded the supported size limit")
             time.sleep(0.05)
 
         stdout_size = os.fstat(stdout_file.fileno()).st_size
-        if stdout_size > MAX_CRAWLER_OUTPUT_BYTES:
-            raise WordlisterError("hakrawler output exceeded the supported size limit")
         stderr_size = os.fstat(stderr_file.fileno()).st_size
-        if stderr_size > MAX_CRAWLER_ERROR_BYTES:
-            raise WordlisterError("hakrawler diagnostic output exceeded the supported size limit")
+        if stdout_size > MAX_DISCOVERY_OUTPUT_BYTES:
+            raise WordlisterError("katana output exceeded the supported size limit")
+        if stderr_size > MAX_DISCOVERY_ERROR_BYTES:
+            raise WordlisterError("katana diagnostic output exceeded the supported size limit")
         stdout_file.seek(0)
         stderr_file.seek(0)
         return _ProcessResult(
             returncode=process.returncode,
-            stdout=stdout_file.read(MAX_CRAWLER_OUTPUT_BYTES),
-            stderr=stderr_file.read(MAX_CRAWLER_ERROR_BYTES),
+            stdout=stdout_file.read(MAX_DISCOVERY_OUTPUT_BYTES),
+            stderr=stderr_file.read(MAX_DISCOVERY_ERROR_BYTES),
         )
 
 
-def _hakrawler_command(
+def _katana_command(
+    seed: str,
     options: DiscoveryOptions,
     *,
     workers: int,
@@ -223,26 +244,56 @@ def _hakrawler_command(
 ) -> list[str]:
     command = [
         options.executable,
-        "-json",
         "-u",
-        "-d",
+        seed,
+        "-jsonl",
+        "-omit-raw",
+        "-omit-body",
+        "-silent",
+        "-no-color",
+        "-disable-update-check",
+        "-disable-redirects",
+        "-ignore-query-params",
+        "-strategy",
+        "breadth-first",
+        "-depth",
         str(options.max_depth),
-        "-t",
+        "-concurrency",
         str(workers),
+        "-parallelism",
+        "1",
         "-timeout",
-        str(options.timeout),
-        "-size",
-        str(max(1, (max_response_bytes + 1023) // 1024)),
-        "-dr",
+        str(min(options.timeout, 60)),
+        "-crawl-duration",
+        f"{options.timeout}s",
+        "-max-response-size",
+        str(max_response_bytes),
+        "-crawl-scope",
+        _katana_scope_pattern(seed, options.mode),
     ]
-    if options.mode == "subdomain":
-        command.append("-subs")
+    if options.js_crawl:
+        command.append("-js-crawl")
     return command
 
 
+def _katana_record_url(item: object) -> str | None:
+    if not isinstance(item, dict):
+        return None
+    request = item.get("request")
+    if isinstance(request, dict):
+        endpoint = request.get("endpoint")
+        if isinstance(endpoint, str):
+            return endpoint
+    for key in ("url", "endpoint"):
+        value = item.get(key)
+        if isinstance(value, str):
+            return value
+    return None
+
+
 @dataclass(frozen=True, slots=True)
-class HakrawlerDiscovery:
-    """Discover URLs with hakrawler and independently enforce Wordlister policy."""
+class KatanaDiscovery:
+    """Discover URLs with Katana while preserving its breadth-first output priority."""
 
     def discover(
         self,
@@ -253,15 +304,15 @@ class HakrawlerDiscovery:
         max_url_length: int,
         max_response_bytes: int,
     ) -> tuple[str, ...]:
-        result = _execute_hakrawler(
-            _hakrawler_command(options, workers=workers, max_response_bytes=max_response_bytes),
-            seed,
-            options.timeout,
+        result = _execute_katana(
+            _katana_command(seed, options, workers=workers, max_response_bytes=max_response_bytes),
+            options.timeout + 5,
         )
         if result.returncode != 0:
-            raise WordlisterError(f"hakrawler exited with status {result.returncode}")
+            raise WordlisterError(f"katana exited with status {result.returncode}")
 
-        discovered: set[str] = set()
+        discovered: list[str] = []
+        seen: set[str] = set()
         records_seen = 0
         for raw_line in result.stdout.splitlines():
             if not raw_line.strip():
@@ -270,20 +321,164 @@ class HakrawlerDiscovery:
                 item = json.loads(raw_line)
             except (UnicodeDecodeError, json.JSONDecodeError):
                 continue
-            raw_url = item.get("URL") if isinstance(item, dict) else None
-            if not isinstance(raw_url, str):
+            raw_url = _katana_record_url(item)
+            if raw_url is None:
                 continue
             records_seen += 1
             try:
                 url = normalize_discovered_url(raw_url, max_length=max_url_length)
             except InvalidTargetError:
                 continue
-            if _url_in_scope(url, seed, options.mode) and not _is_asset_url(url):
-                discovered.add(url)
+            if (
+                url not in seen
+                and _url_in_scope(url, seed, options.mode)
+                and not _is_asset_url(url)
+            ):
+                seen.add(url)
+                discovered.append(url)
 
         if result.stdout.strip() and records_seen == 0:
-            raise WordlisterError("hakrawler returned an unsupported output format")
-        return tuple(sorted(discovered))
+            raise WordlisterError("katana returned an unsupported output format")
+        return tuple(discovered)
+
+
+def _xml_local_name(tag: str) -> str:
+    return tag.rsplit("}", maxsplit=1)[-1].lower()
+
+
+def _burp_item_fields(item: ET.Element) -> dict[str, ET.Element]:
+    return {_xml_local_name(child.tag): child for child in item}
+
+
+def _element_text(fields: dict[str, ET.Element], name: str) -> str:
+    element = fields.get(name)
+    return (element.text or "") if element is not None else ""
+
+
+def _burp_request_target(request: ET.Element) -> str | None:
+    encoded = request.text or ""
+    if request.attrib.get("base64", "false").lower() == "true":
+        compact = "".join(encoded.split())
+        if len(compact) > (MAX_BURP_REQUEST_BYTES * 4 // 3) + 4:
+            raise WordlisterError("Burp history request exceeded the supported size limit")
+        try:
+            request_bytes = base64.b64decode(compact, validate=True)
+        except (ValueError, binascii.Error) as error:
+            raise WordlisterError("Burp history contains an invalid Base64 request") from error
+    else:
+        request_bytes = encoded.encode("utf-8")
+    if len(request_bytes) > MAX_BURP_REQUEST_BYTES:
+        raise WordlisterError("Burp history request exceeded the supported size limit")
+
+    first_line = request_bytes.splitlines()[0] if request_bytes.splitlines() else b""
+    parts = first_line.decode("latin-1").split()
+    return parts[1] if len(parts) >= 2 else None
+
+
+def _reconstruct_burp_item_url(fields: dict[str, ET.Element]) -> str | None:
+    request = fields.get("request")
+    if request is None:
+        return None
+    target = _burp_request_target(request)
+    if not target:
+        return None
+    if target.startswith(("http://", "https://")):
+        return target
+    if not target.startswith("/"):
+        return None
+
+    protocol = _element_text(fields, "protocol").lower()
+    host = _element_text(fields, "host").strip()
+    port_text = _element_text(fields, "port").strip()
+    if protocol not in {"http", "https"} or not host:
+        return None
+    try:
+        port = int(port_text) if port_text else (443 if protocol == "https" else 80)
+    except ValueError:
+        return None
+    if not 1 <= port <= 65535:
+        return None
+    rendered_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
+    default_port = 443 if protocol == "https" else 80
+    authority = rendered_host if port == default_port else f"{rendered_host}:{port}"
+    return f"{protocol}://{authority}{target}"
+
+
+def _iter_burp_xml_urls(path: Path) -> Iterable[str]:
+    with path.open("rb") as source:
+        prefix = source.read(64 * 1024).upper()
+        if b"<!DOCTYPE" in prefix or b"<!ENTITY" in prefix:
+            raise WordlisterError("Burp history XML declarations are not supported")
+    try:
+        item_count = 0
+        for _event, element in ET.iterparse(path, events=("end",)):
+            if _xml_local_name(element.tag) != "item":
+                continue
+            item_count += 1
+            if item_count > MAX_BURP_HISTORY_ITEMS:
+                raise WordlisterError("Burp history item count exceeded the supported limit")
+            fields = _burp_item_fields(element)
+            url = _element_text(fields, "url").strip()
+            if url:
+                yield url
+            else:
+                reconstructed = _reconstruct_burp_item_url(fields)
+                if reconstructed:
+                    yield reconstructed
+            element.clear()
+    except ET.ParseError as error:
+        raise WordlisterError("Burp history file contains malformed XML") from error
+
+
+def _iter_burp_text_urls(path: Path) -> Iterable[str]:
+    try:
+        with path.open("r", encoding="utf-8-sig") as source:
+            for raw_line in source:
+                line = raw_line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                fields = line.split("\t")
+                if len(fields) >= 3 and "://" in fields[1]:
+                    yield urljoin(fields[1].rstrip("/") + "/", fields[2].lstrip("/"))
+                elif line.startswith(("http://", "https://")):
+                    yield line
+    except UnicodeError as error:
+        raise WordlisterError("Burp history text export must use UTF-8") from error
+
+
+def read_burp_history_urls(
+    paths: Sequence[Path],
+    *,
+    max_url_length: int,
+) -> tuple[str, ...]:
+    """Read URL-only evidence from Burp XML, TSV, or plain-text history exports."""
+
+    urls: list[str] = []
+    seen: set[str] = set()
+    for path in paths:
+        try:
+            size = path.stat().st_size
+        except OSError as error:
+            raise WordlisterError(f"could not read Burp history file: {error}") from error
+        if size > MAX_BURP_HISTORY_BYTES:
+            raise WordlisterError("Burp history file exceeded the supported size limit")
+        try:
+            with path.open("rb") as source:
+                first = source.read(4096).lstrip()
+        except OSError as error:
+            raise WordlisterError(f"could not read Burp history file: {error}") from error
+        candidates = (
+            _iter_burp_xml_urls(path) if first.startswith(b"<") else _iter_burp_text_urls(path)
+        )
+        for raw_url in candidates:
+            try:
+                url = normalize_discovered_url(raw_url, max_length=max_url_length)
+            except InvalidTargetError:
+                continue
+            if url not in seen and not _is_asset_url(url):
+                seen.add(url)
+                urls.append(url)
+    return tuple(urls)
 
 
 def discover_targets(
@@ -293,34 +488,36 @@ def discover_targets(
     workers: int,
     max_url_length: int,
     max_response_bytes: int,
+    burp_history_paths: Sequence[Path] = (),
     provider: DiscoveryProvider | None = None,
 ) -> tuple[str, ...]:
-    """Return validated seed URLs plus bounded targets discovered by the selected provider."""
+    """Combine seeds, Burp history, and optional Katana results under one policy boundary."""
 
     if workers < 1:
         raise ValueError("workers must be at least 1")
-
-    stripped_targets = tuple(dict.fromkeys(target.strip() for target in targets if target.strip()))
-    if options.provider == "none" or options.mode == "single" or options.max_depth == 0:
-        return stripped_targets
-
     seeds = tuple(
         dict.fromkeys(
             normalize_discovered_url(target.strip(), max_length=max_url_length)
-            for target in stripped_targets
+            for target in targets
+            if target.strip()
         )
     )
+    burp_urls = read_burp_history_urls(burp_history_paths, max_url_length=max_url_length)
+    active_provider = provider or KatanaDiscovery()
 
     selected: list[str] = []
-    active_provider = provider or HakrawlerDiscovery()
     for seed in seeds:
-        discovered = active_provider.discover(
-            seed,
-            options,
-            workers=workers,
-            max_url_length=max_url_length,
-            max_response_bytes=max_response_bytes,
-        )
-        per_seed = (seed, *(url for url in discovered if url != seed))[: options.max_pages]
-        selected.extend(per_seed)
+        candidates: list[str] = [seed]
+        candidates.extend(url for url in burp_urls if _url_in_scope(url, seed, options.mode))
+        if options.provider == "katana" and options.mode != "single" and options.max_depth > 0:
+            candidates.extend(
+                active_provider.discover(
+                    seed,
+                    options,
+                    workers=workers,
+                    max_url_length=max_url_length,
+                    max_response_bytes=max_response_bytes,
+                )
+            )
+        selected.extend(tuple(dict.fromkeys(candidates))[: options.max_pages])
     return tuple(dict.fromkeys(selected))

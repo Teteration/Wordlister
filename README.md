@@ -16,7 +16,7 @@ It does not ship with a dictionary and does not download third-party wordlists. 
 - Extracts backend-oriented form fields, endpoint references, request parameters, and optional comments from HTML and JavaScript.
 - Parses JSON keys and URL-shaped values recursively with depth and node limits.
 - Extracts selected response-header metadata and redirect paths without emitting cookie or authorization values.
-- Optionally delegates URL discovery to `hakrawler` while retaining Wordlister's own validation, scope, fetch, extraction, and scoring policies.
+- Combines high-signal Burp HTTP history URLs with optional breadth-first Katana discovery while retaining Wordlister's own validation, scope, fetch, extraction, and scoring policies.
 - Uses deterministic output, bounded downloads, explicit timeouts, same-origin redirects, and visible per-target failures.
 - Preserves the original `python3 wordlister.py` invocation while providing an installable `wordlister` command.
 
@@ -43,10 +43,10 @@ The compatibility installation command is also supported:
 python -m pip install -r requirements.txt
 ```
 
-Recursive discovery is optional and requires the separate `hakrawler` executable:
+Recursive discovery is optional and requires the separate Katana executable:
 
 ```bash
-go install github.com/hakluke/hakrawler@latest
+go install github.com/projectdiscovery/katana/cmd/katana@latest
 ```
 
 Ensure the Go binary directory, commonly `~/go/bin`, is present in `PATH`. Wordlister does not download or install crawler binaries automatically.
@@ -63,12 +63,13 @@ Or run directly from the repository:
 python3 wordlister.py --url https://example.com --output-format lines
 ```
 
-Discover same-host URLs through five link layers with `hakrawler`, then let Wordlister fetch and analyze the bounded result set:
+Combine a Burp Proxy HTTP history export with breadth-first Katana discovery, then let Wordlister fetch and analyze the bounded result set:
 
 ```bash
 wordlister \
   --url https://example.com \
-  --crawler hakrawler \
+  --burp-history burp-history.xml \
+  --crawler katana \
   --mode domain \
   --depth 5 \
   --max-pages 1000 \
@@ -89,6 +90,8 @@ wordlister \
 ```
 
 Input files contain one HTTP/HTTPS URL per line. Blank lines and lines beginning with `#` are ignored.
+
+Burp imports accept the standard XML history export, tab-separated HTTP history rows, or a text file containing one URL per line. Repeat `--burp-history` to combine several exports. Only URLs are imported: Wordlister does not replay Burp request bodies, cookies, authorization headers, or other session state.
 
 ## Where the words come from
 
@@ -129,24 +132,26 @@ wordlister (--url URL | --input-file PATH) [OPTIONS]
 | `--drop-obfuscated` | Drop hex-like and opaque token values | off |
 | `--include-comments` | Include HTML comment candidates | off |
 | `--output-format list\|lines\|json` | Machine-readable stdout format | `list` |
-| `--crawler none\|hakrawler` | Optional external URL discovery provider | `none` |
+| `--crawler none\|katana` | Optional external URL discovery provider | `none` |
 | `--mode single\|domain\|subdomain` | Discovery scope | `domain` |
-| `--depth N` | Maximum discovered-link depth; requires `--crawler hakrawler` | `0` |
-| `--max-pages N` | Maximum pages Wordlister fetches per supplied seed after discovery | `1000` |
-| `--crawler-timeout SECONDS` | Maximum hakrawler runtime per supplied seed | `120` |
-| `--crawler-path PATH` | Custom hakrawler executable name or path | `hakrawler` |
+| `--depth N` | Maximum Katana crawl depth; requires `--crawler katana` | `0` |
+| `--max-pages N` | Maximum pages Wordlister fetches per seed across seed, Burp, and Katana URLs | `1000` |
+| `--crawler-timeout SECONDS` | Maximum Katana runtime per supplied seed | `120` |
+| `--crawler-path PATH` | Custom Katana executable name or path | `katana` |
+| `--burp-history PATH` | Burp XML/TSV or URL-list export; may be repeated | none |
+| `--no-js-crawl` | Disable Katana JavaScript endpoint parsing | off |
 | `--connect-timeout SECONDS` | Connection timeout | `3.05` |
 | `--read-timeout SECONDS` | Read timeout | `10` |
 | `--max-response-bytes N` | Per-response download limit | `2097152` |
 | `--max-redirects N` | Same-origin redirect limit | `5` |
 
-Without `--crawler hakrawler`, Wordlister processes only the supplied URL or URL list. Giving a positive `--depth` without selecting a crawler is an error rather than silently ignoring the option.
+Without `--crawler katana`, Wordlister processes the supplied seeds plus any `--burp-history` URLs. Giving a positive `--depth` without selecting Katana is an error rather than silently ignoring the option.
 
-Depth is measured in discovered-link hops: depth `1` includes links found on the seed, depth `2` includes links found on those pages, and so on. `single` disables discovery, `domain` permits only the exact seed host, and `subdomain` also permits child subdomains. Wordlister independently validates and normalizes crawler output, removes fragments and common static/download assets, reapplies scope, deduplicates URLs, and enforces the per-seed `--max-pages` fetch budget.
+Depth is measured in discovered-link hops. Katana runs breadth-first so shallower URLs retain priority when `--max-pages` is reached. Wordlister applies the page budget in this order: seed URL, in-scope Burp history URLs in export order, then in-scope Katana URLs in discovery order. `single` keeps only the seed, `domain` permits the exact seed host, and `subdomain` also permits child subdomains. Wordlister independently validates and normalizes all imported/discovered URLs, removes fragments and common static/download assets, reapplies scope, and deduplicates URLs.
 
-Discovery and extraction are separate network stages: hakrawler fetches pages to discover URLs, then Wordlister fetches the selected URLs again with its own bounded HTTP client to extract and score candidates. This intentionally duplicates requests for selected pages so crawler-specific transport behavior cannot bypass Wordlister's extraction and HTTP policies. The crawler timeout, depth, response-size setting, and Wordlister page budget should therefore be chosen conservatively.
+Katana discovery and extraction are separate network stages: Katana fetches pages to discover URLs, then Wordlister fetches selected URLs again with its own bounded HTTP client to extract and score candidates. This intentionally duplicates requests for selected pages so crawler-specific transport behavior cannot bypass Wordlister's extraction and HTTP policies. Burp-only imports do not perform a discovery network pass. The crawler timeout, depth, response-size setting, and page budget should be chosen conservatively.
 
-Wordlister starts hakrawler with redirect following disabled so an unvalidated redirect cannot silently move discovery to another origin. Supply the final canonical seed URL (for example, the post-redirect HTTPS or `www` URL) when discovery returns no links from a redirecting seed.
+Wordlister starts Katana with breadth-first traversal, redirect following disabled, query-value deduplication, bounded response sizes, and JavaScript endpoint parsing enabled by default. Supply the final canonical seed URL when discovery returns no links from a redirecting seed. Use `--no-js-crawl` if JavaScript parsing is too expensive for the target.
 
 ### Exit codes and streams
 
@@ -218,8 +223,8 @@ Generated wordlists can still contain target-specific business terms and should 
 
 ```text
 CLI
- ├── optional discovery adapter (hakrawler subprocess)
- │    └── validation, scope enforcement, normalization, asset filtering, page budget
+ ├── discovery inputs (Burp history importer + optional Katana subprocess)
+ │    └── validation, scope enforcement, normalization, priority, asset filtering, page budget
  └── pipeline (deduplication, concurrency, deterministic aggregation)
       ├── HTTP client (validation, redirects, limits, sanitized errors)
       └── response dispatcher
@@ -238,13 +243,14 @@ ruff format --check .
 python -m build
 ```
 
-The normal test suite uses mocked subprocesses and does not require hakrawler or live network access.
+The normal test suite uses mocked subprocesses and temporary Burp fixtures; it does not require Katana, Burp Suite, or live network access.
 
 ## Current limitations
 
-- Recursive discovery requires a separately installed `hakrawler` executable and does not execute browser JavaScript.
-- Routes that only appear after client-side JavaScript execution may not be discovered.
-- `--max-pages` limits Wordlister's post-discovery fetches; hakrawler itself is bounded by depth, page-size, and crawler-timeout settings rather than a native page-count flag.
+- Recursive discovery requires a separately installed Katana executable. Wordlister currently uses Katana's standard crawler with JavaScript parsing, not its headless browser mode.
+- Routes that require actual browser-side JavaScript execution may still be absent unless they already appear in Burp history.
+- Burp history imports preserve URLs but do not replay authenticated headers, cookies, request bodies, or HTTP methods; Wordlister's extraction fetches remain GET requests.
+- `--max-pages` limits Wordlister's selected fetches; Katana itself is bounded by depth, response size, and crawler timeout rather than a native page-count flag.
 - External JavaScript and CSS assets are not downloaded for secondary analysis.
 - JavaScript extraction is best-effort and does not implement a full parser.
 - The current CLI performs GET requests only.

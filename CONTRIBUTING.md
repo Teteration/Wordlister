@@ -48,7 +48,7 @@ python -m build
 
 - Unit tests must not depend on public internet access.
 - Use injected fake fetchers and sessions for HTTP behavior.
-- Mock external discovery subprocesses; hakrawler must not be required by the normal test suite.
+- Mock external discovery subprocesses and use temporary Burp fixtures; Katana and Burp Suite must not be required by the normal test suite.
 - Cover success, boundary, and failure paths.
 - Security fixes require a regression test.
 

@@ -129,9 +129,11 @@ class CliTests(unittest.TestCase):
     def test_external_discovery_targets_are_passed_to_pipeline(self) -> None:
         captured_targets: list[str] = []
         captured_options: list[DiscoveryOptions] = []
+        captured_burp_paths: list[Path] = []
 
         def fake_discover(targets: list[str], **kwargs: object) -> tuple[str, ...]:
             captured_options.append(kwargs["options"])
+            captured_burp_paths.extend(kwargs["burp_history_paths"])
             self.assertEqual(["https://example.com"], targets)
             return ("https://example.com/", "https://example.com/account")
 
@@ -150,7 +152,7 @@ class CliTests(unittest.TestCase):
                     "--url",
                     "https://example.com",
                     "--crawler",
-                    "hakrawler",
+                    "katana",
                     "--mode",
                     "subdomain",
                     "--depth",
@@ -160,19 +162,23 @@ class CliTests(unittest.TestCase):
                     "--crawler-timeout",
                     "45",
                     "--crawler-path",
-                    "/opt/tools/hakrawler",
+                    "/opt/tools/katana",
+                    "--burp-history",
+                    "/tmp/burp-history.xml",
+                    "--no-js-crawl",
                 ]
             )
 
         self.assertEqual(EXIT_SUCCESS, exit_code)
         self.assertEqual(
             DiscoveryOptions(
-                provider="hakrawler",
+                provider="katana",
                 mode="subdomain",
                 max_depth=3,
                 max_pages=250,
                 timeout=45,
-                executable="/opt/tools/hakrawler",
+                executable="/opt/tools/katana",
+                js_crawl=False,
             ),
             captured_options[0],
         )
@@ -180,6 +186,7 @@ class CliTests(unittest.TestCase):
             ["https://example.com/", "https://example.com/account"],
             captured_targets,
         )
+        self.assertEqual([Path("/tmp/burp-history.xml")], captured_burp_paths)
 
     def test_depth_without_crawler_returns_clear_error(self) -> None:
         stderr = io.StringIO()
@@ -191,7 +198,7 @@ class CliTests(unittest.TestCase):
             exit_code = main(["--url", "https://example.com", "--depth", "2"])
 
         self.assertEqual(EXIT_ERROR, exit_code)
-        self.assertIn("--depth requires --crawler hakrawler", stderr.getvalue())
+        self.assertIn("--depth requires --crawler katana", stderr.getvalue())
 
     def test_invalid_options_return_error_without_traceback(self) -> None:
         stderr = io.StringIO()

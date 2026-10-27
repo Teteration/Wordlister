@@ -64,7 +64,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser.add_argument(
         "--crawler",
-        choices=("none", "hakrawler"),
+        choices=("none", "katana"),
         default="none",
         help="optional external URL discovery provider (default: none)",
     )
@@ -90,12 +90,24 @@ def build_parser() -> argparse.ArgumentParser:
         "--crawler-timeout",
         type=int,
         default=120,
-        help="maximum hakrawler runtime per supplied seed in seconds (default: 120)",
+        help="maximum Katana runtime per supplied seed in seconds (default: 120)",
     )
     parser.add_argument(
         "--crawler-path",
-        default="hakrawler",
-        help="hakrawler executable name or path (default: hakrawler)",
+        default="katana",
+        help="Katana executable name or path (default: katana)",
+    )
+    parser.add_argument(
+        "--burp-history",
+        type=Path,
+        action="append",
+        default=[],
+        help="Burp HTTP history XML/TSV or URL-list export; may be repeated",
+    )
+    parser.add_argument(
+        "--no-js-crawl",
+        action="store_true",
+        help="disable Katana JavaScript endpoint parsing",
     )
     return parser
 
@@ -168,6 +180,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             max_pages=args.max_pages,
             timeout=args.crawler_timeout,
             executable=args.crawler_path,
+            js_crawl=not args.no_js_crawl,
         )
         targets = _read_targets(args)
         if not targets:
@@ -179,6 +192,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 workers=args.threads,
                 max_url_length=http_options.max_url_length,
                 max_response_bytes=http_options.max_response_bytes,
+                burp_history_paths=args.burp_history,
             )
         )
         result = build_wordlist(

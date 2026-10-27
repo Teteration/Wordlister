@@ -26,15 +26,16 @@ class ExtractOptions:
 class DiscoveryOptions:
     """Controls optional URL discovery by an external crawler."""
 
-    provider: Literal["none", "hakrawler"] = "none"
+    provider: Literal["none", "katana"] = "none"
     mode: Literal["single", "domain", "subdomain"] = "domain"
     max_depth: int = 0
     max_pages: int = 1000
     timeout: int = 120
-    executable: str = "hakrawler"
+    executable: str = "katana"
+    js_crawl: bool = True
 
     def __post_init__(self) -> None:
-        if self.provider not in {"none", "hakrawler"}:
+        if self.provider not in {"none", "katana"}:
             raise ValueError("unsupported crawler provider")
         if self.mode not in {"single", "domain", "subdomain"}:
             raise ValueError("unsupported crawler mode")
@@ -47,7 +48,7 @@ class DiscoveryOptions:
         if not self.executable or "\x00" in self.executable:
             raise ValueError("crawler_path must name an executable")
         if self.provider == "none" and self.max_depth > 0:
-            raise ValueError("--depth requires --crawler hakrawler")
+            raise ValueError("--depth requires --crawler katana")
 
 
 @dataclass(frozen=True, slots=True)
