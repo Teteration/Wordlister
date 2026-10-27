@@ -6,9 +6,10 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from wordlister_core.discovery import discover_targets
 from wordlister_core.errors import WordlisterError
 from wordlister_core.http import HttpClient
-from wordlister_core.models import ExtractOptions, HttpOptions, WordlistResult
+from wordlister_core.models import DiscoveryOptions, ExtractOptions, HttpOptions, WordlistResult
 from wordlister_core.pipeline import build_wordlist
 
 EXIT_SUCCESS = 0
@@ -61,18 +62,40 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-response-bytes", type=int, default=2 * 1024 * 1024)
     parser.add_argument("--max-redirects", type=int, default=5)
 
-    # Retained so existing scripts do not break. These options never implemented crawling.
+    parser.add_argument(
+        "--crawler",
+        choices=("none", "hakrawler"),
+        default="none",
+        help="optional external URL discovery provider (default: none)",
+    )
     parser.add_argument(
         "--mode",
         choices=("single", "domain", "subdomain"),
-        default="single",
-        help="deprecated compatibility option; does not enable crawling",
+        default="domain",
+        help="crawler scope: seed only, exact host, or host plus child subdomains",
     )
     parser.add_argument(
         "--depth",
         type=int,
-        default=2,
-        help="deprecated compatibility option; does not enable crawling",
+        default=0,
+        help="maximum discovered-link depth (default: 0)",
+    )
+    parser.add_argument(
+        "--max-pages",
+        type=int,
+        default=1000,
+        help="maximum fetched pages per supplied seed, including the seed (default: 1000)",
+    )
+    parser.add_argument(
+        "--crawler-timeout",
+        type=int,
+        default=120,
+        help="maximum hakrawler runtime per supplied seed in seconds (default: 120)",
+    )
+    parser.add_argument(
+        "--crawler-path",
+        default="hakrawler",
+        help="hakrawler executable name or path (default: hakrawler)",
     )
     return parser
 
@@ -138,9 +161,26 @@ def main(argv: Sequence[str] | None = None) -> int:
             max_response_bytes=args.max_response_bytes,
             max_redirects=args.max_redirects,
         )
+        discovery_options = DiscoveryOptions(
+            provider=args.crawler,
+            mode=args.mode,
+            max_depth=args.depth,
+            max_pages=args.max_pages,
+            timeout=args.crawler_timeout,
+            executable=args.crawler_path,
+        )
         targets = _read_targets(args)
         if not targets:
             raise WordlisterError("no targets were found in the selected input")
+        targets = list(
+            discover_targets(
+                targets,
+                options=discovery_options,
+                workers=args.threads,
+                max_url_length=http_options.max_url_length,
+                max_response_bytes=http_options.max_response_bytes,
+            )
+        )
         result = build_wordlist(
             targets,
             fetcher=HttpClient(http_options),
