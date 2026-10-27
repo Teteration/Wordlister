@@ -40,22 +40,22 @@ class WordEvidence:
 SOURCE_WEIGHTS = {
     "form.action": 4,
     "javascript.fetch": 4,
-    "javascript.import": 4,
     "javascript.xhr.open": 4,
+    "javascript.url": 4,
+    "javascript.parameter": 4,
+    "form.field.name": 4,
+    "html.formaction": 4,
+    "html.data-api": 4,
+    "html.data-endpoint": 4,
+    "html.data-url": 4,
+    "header.cookie.name": 4,
+    "header.value": 4,
+    "url.query.name": 4,
     "header.location": 3,
     "header.cookie.path": 3,
     "json.url": 3,
     "url.path": 3,
-    "url.query.name": 3,
-    "url.query.value": 3,
-    "url.fragment": 3,
-    "html.attribute.name": 2,
-    "header.name": 2,
-    "header.cookie.name": 2,
-    "header.filename": 2,
-    "header.value": 2,
-    "javascript.declaration": 2,
-    "javascript.object_key": 2,
+    "url.query.url": 3,
     "json.key": 2,
 }
 
@@ -63,11 +63,13 @@ SOURCE_WEIGHTS = {
 def source_weight(source: str) -> int:
     """Return the documented relevance weight for a source label."""
 
+    if source in SOURCE_WEIGHTS:
+        return SOURCE_WEIGHTS[source]
     if source.startswith("javascript.axios."):
         return 4
-    if source.startswith(("html.data-", "html.href", "html.src", "html.poster")):
+    if source.startswith(("html.data-", "html.href", "html.src")):
         return 3
-    return SOURCE_WEIGHTS.get(source, 1)
+    return 1
 
 
 def score_sources(sources: Iterable[str]) -> int:

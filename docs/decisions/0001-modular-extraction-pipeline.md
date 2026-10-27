@@ -19,12 +19,14 @@ The repository must remain approachable as a small Python security tool and keep
 Use a `src/wordlister_core` package with this dependency flow:
 
 ```text
-CLI -> pipeline -> HTTP client + response dispatcher -> extractors -> tokenizer
+CLI -> optional discovery adapter -> pipeline -> HTTP client + response dispatcher -> extractors -> tokenizer
 ```
 
 - Extractors are pure functions wherever practical.
 - The HTTP client owns URL validation, redirects, timeouts, size limits, and safe errors.
 - The pipeline owns per-run deduplication, concurrency, aggregation, and deterministic ordering.
+- The optional discovery adapter owns external crawler execution and treats its output as untrusted input that must be revalidated, normalized, scoped, filtered, and bounded before entering the pipeline.
+- External crawlers run without a shell or inherited proxy variables, with bounded output and an explicit timeout.
 - The CLI owns argument parsing, rendering, and exit codes.
 - `wordlister.py` remains a thin source-checkout launcher.
 - The internal package is named `wordlister_core` because a top-level `wordlister.py` module and a `wordlister` package conflict when importing from a source checkout.
@@ -38,6 +40,10 @@ Rejected because each new format would increase coupling and duplicate request/e
 ### Introduce a plugin framework
 
 Rejected as premature. The current formats need clear functions and a dispatcher, not runtime discovery or abstract factories.
+
+### Implement and maintain a recursive crawler internally
+
+Rejected because link discovery, traversal, and crawler-specific edge cases are not Wordlister's primary responsibility. A narrow adapter to an established external crawler keeps Wordlister focused on bounded fetching, backend-oriented extraction, provenance, and scoring.
 
 ### Remove the legacy script
 
@@ -57,7 +63,10 @@ Rejected for now because existing users may invoke `python3 wordlister.py`. The 
 - The project has more files than the original prototype.
 - The public project name and internal import package differ.
 - Full request-lifecycle changes may span several modules.
+- External discovery requires an independently installed executable and performs a separate network pass before Wordlister fetches selected URLs.
+- Selected pages are requested twice: once by the discovery provider and once by Wordlister's own HTTP client for extraction.
+- Discovery does not execute browser JavaScript, so client-rendered-only routes may remain invisible.
 
 ## Follow-up
 
-Split an extractor further only when its complexity independently justifies another boundary. Do not add a crawler module until recursive crawling is intentionally designed and tested.
+Split an extractor further only when its complexity independently justifies another boundary. Additional discovery providers must use the same validation and scope boundary rather than coupling provider-specific output to the extraction pipeline.

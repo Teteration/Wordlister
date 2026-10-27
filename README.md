@@ -11,11 +11,12 @@ It does not ship with a dictionary and does not download third-party wordlists. 
 
 ## Highlights
 
-- Extracts identifiers from URL hosts, paths, query strings, fragments, and nested URL values.
+- Extracts backend-oriented route segments, query parameter names, and nested URL routes.
 - Splits `camelCase`, `PascalCase`, `snake_case`, `kebab-case`, dotted names, and mixed identifiers while retaining useful originals.
-- Parses HTML text, attributes, forms, linked resources, inline JavaScript, embedded JSON, and optional comments.
-- Parses JSON keys and safe string values recursively with depth and node limits.
+- Extracts backend-oriented form fields, endpoint references, request parameters, and optional comments from HTML and JavaScript.
+- Parses JSON keys and URL-shaped values recursively with depth and node limits.
 - Extracts selected response-header metadata and redirect paths without emitting cookie or authorization values.
+- Optionally delegates URL discovery to `hakrawler` while retaining Wordlister's own validation, scope, fetch, extraction, and scoring policies.
 - Uses deterministic output, bounded downloads, explicit timeouts, same-origin redirects, and visible per-target failures.
 - Preserves the original `python3 wordlister.py` invocation while providing an installable `wordlister` command.
 
@@ -42,6 +43,14 @@ The compatibility installation command is also supported:
 python -m pip install -r requirements.txt
 ```
 
+Recursive discovery is optional and requires the separate `hakrawler` executable:
+
+```bash
+go install github.com/hakluke/hakrawler@latest
+```
+
+Ensure the Go binary directory, commonly `~/go/bin`, is present in `PATH`. Wordlister does not download or install crawler binaries automatically.
+
 ## Quick start
 
 ```bash
@@ -52,6 +61,18 @@ Or run directly from the repository:
 
 ```bash
 python3 wordlister.py --url https://example.com --output-format lines
+```
+
+Discover same-host URLs through five link layers with `hakrawler`, then let Wordlister fetch and analyze the bounded result set:
+
+```bash
+wordlister \
+  --url https://example.com \
+  --crawler hakrawler \
+  --mode domain \
+  --depth 5 \
+  --max-pages 1000 \
+  --output-format json | jq .
 ```
 
 Analyze a prepared URL list:
@@ -73,12 +94,11 @@ Input files contain one HTTP/HTTPS URL per line. Blank lines and lines beginning
 
 | Source | Examples |
 | --- | --- |
-| Requested, redirected, and final URLs | host labels, path segments, filenames, query names, safe query values, fragments |
-| HTML text | headings, labels, buttons, validation messages |
-| HTML attributes | `id`, `class`, `name`, `placeholder`, `aria-*`, `data-*`, form actions, linked URLs |
-| Embedded JSON | object keys, safe string values, relative and absolute URL values |
-| Inline JavaScript | variable names, simple string assignments, object keys, `fetch`/Axios/import URLs |
-| Response headers | redirect locations, cookie names and paths, filenames, allowed/exposed header names |
+| Requested, redirected, and final URLs | route segments, query parameter names, and nested URL routes |
+| HTML forms and endpoint attributes | field names, form actions, navigational links, iframe URLs, and explicit `data-api`/`data-endpoint`/`data-url` references |
+| Embedded JSON | object keys and relative or absolute URL values |
+| Inline JavaScript | request URLs and parameters in request payloads, `FormData`, and `URLSearchParams` |
+| Response headers | redirect routes, cookie names and paths, and CORS-allowed request-header names |
 | HTML comments | optional with `--include-comments` |
 
 The tokenizer retains application identifiers and adds useful components:
@@ -90,6 +110,7 @@ report-v2.json -> report-v2.json, report-v2, report, v2, json
 ```
 
 Candidates are deduplicated, filtered, and sorted before output.
+Candidates containing Persian or other Arabic-script letters are discarded, including mixed identifiers, because they are unlikely to be backend parameter names in the intended fuzzing workflow. Other Unicode scripts remain subject to the selected `--filter` policy.
 
 ## CLI reference
 
@@ -108,12 +129,24 @@ wordlister (--url URL | --input-file PATH) [OPTIONS]
 | `--drop-obfuscated` | Drop hex-like and opaque token values | off |
 | `--include-comments` | Include HTML comment candidates | off |
 | `--output-format list\|lines\|json` | Machine-readable stdout format | `list` |
+| `--crawler none\|hakrawler` | Optional external URL discovery provider | `none` |
+| `--mode single\|domain\|subdomain` | Discovery scope | `domain` |
+| `--depth N` | Maximum discovered-link depth; requires `--crawler hakrawler` | `0` |
+| `--max-pages N` | Maximum pages Wordlister fetches per supplied seed after discovery | `1000` |
+| `--crawler-timeout SECONDS` | Maximum hakrawler runtime per supplied seed | `120` |
+| `--crawler-path PATH` | Custom hakrawler executable name or path | `hakrawler` |
 | `--connect-timeout SECONDS` | Connection timeout | `3.05` |
 | `--read-timeout SECONDS` | Read timeout | `10` |
 | `--max-response-bytes N` | Per-response download limit | `2097152` |
 | `--max-redirects N` | Same-origin redirect limit | `5` |
 
-`--mode` and `--depth` remain accepted for compatibility with earlier releases, but are deprecated and do not enable crawling.
+Without `--crawler hakrawler`, Wordlister processes only the supplied URL or URL list. Giving a positive `--depth` without selecting a crawler is an error rather than silently ignoring the option.
+
+Depth is measured in discovered-link hops: depth `1` includes links found on the seed, depth `2` includes links found on those pages, and so on. `single` disables discovery, `domain` permits only the exact seed host, and `subdomain` also permits child subdomains. Wordlister independently validates and normalizes crawler output, removes fragments and common static/download assets, reapplies scope, deduplicates URLs, and enforces the per-seed `--max-pages` fetch budget.
+
+Discovery and extraction are separate network stages: hakrawler fetches pages to discover URLs, then Wordlister fetches the selected URLs again with its own bounded HTTP client to extract and score candidates. This intentionally duplicates requests for selected pages so crawler-specific transport behavior cannot bypass Wordlister's extraction and HTTP policies. The crawler timeout, depth, response-size setting, and Wordlister page budget should therefore be chosen conservatively.
+
+Wordlister starts hakrawler with redirect following disabled so an unvalidated redirect cannot silently move discovery to another origin. Supply the final canonical seed URL (for example, the post-redirect HTTPS or `www` URL) when discovery returns no links from a redirecting seed.
 
 ### Exit codes and streams
 
@@ -159,16 +192,15 @@ The current fixed source labels are:
 
 | Area | Sources |
 | --- | --- |
-| URL | `url.host`, `url.path`, `url.query.name`, `url.query.value`, `url.fragment` |
-| HTML | `html.text`, `html.attribute.name`, `html.comment`, `form.action`, `html.action`, `html.formaction`, `html.href`, `html.src`, `html.srcset`, `html.poster`, `html.data`, `html.data-api`, `html.data-endpoint`, `html.data-href`, `html.data-src`, `html.data-url` |
-| JSON | `json.key`, `json.value`, `json.url` |
-| JavaScript | `javascript.declaration`, `javascript.string`, `javascript.object_key`, `javascript.fetch`, `javascript.import`, `javascript.xhr.open`, `javascript.axios.get`, `javascript.axios.post`, `javascript.axios.put`, `javascript.axios.patch`, `javascript.axios.delete` |
-| Response headers | `header.name`, `header.location`, `header.cookie.name`, `header.cookie.path`, `header.cookie.domain`, `header.filename`, `header.value` |
-| Other textual responses | `response.text` |
+| URL | `url.path`, `url.query.name`, `url.query.url` |
+| HTML | `html.comment` (opt-in), `form.field.name`, `form.action`, `html.formaction`, `html.href`, `html.src`, `html.data-api`, `html.data-endpoint`, `html.data-href`, `html.data-url` |
+| JSON | `json.key`, `json.url` |
+| JavaScript | `javascript.url`, `javascript.parameter`, `javascript.fetch`, `javascript.xhr.open`, `javascript.axios.get`, `javascript.axios.post`, `javascript.axios.put`, `javascript.axios.patch`, `javascript.axios.delete` |
+| Response headers | `header.location`, `header.cookie.name`, `header.cookie.path`, `header.value` |
 
-HTML attribute value labels are also generated dynamically as `html.<attribute-name>`, so inputs can produce labels such as `html.id`, `html.class`, `html.title`, `html.aria-label`, or other custom attribute names.
+Source weights are 4 for form field names, query names, cookie names, CORS-allowed request-header names, explicit form/data endpoints, and JavaScript request parameters or destinations; 3 for other route-like URL sources; 2 for JSON keys; and 1 for optional comment sources. Each unique source contributes its weight at most once per word.
 
-Source weights are 4 for form actions and JavaScript request/import destinations; 3 for URL paths, queries, fragments, redirect and cookie-path URLs, JSON URLs, and HTML `href`/`src`/`srcset`/`poster`/`data-*` sources; 2 for structured names such as JSON keys, JavaScript declarations/object keys, and selected header or attribute names; and 1 for all other sources. Each unique source contributes its weight at most once per word.
+Visible HTML prose, `class`/`id`/presentation attributes, arbitrary JSON string values, generic JavaScript variable names, host labels, fragments, static image/script assets, and generic response-header names are not extracted. They tend to describe the frontend rather than accepted backend input.
 
 ## Safety model
 
@@ -186,6 +218,8 @@ Generated wordlists can still contain target-specific business terms and should 
 
 ```text
 CLI
+ ├── optional discovery adapter (hakrawler subprocess)
+ │    └── validation, scope enforcement, normalization, asset filtering, page budget
  └── pipeline (deduplication, concurrency, deterministic aggregation)
       ├── HTTP client (validation, redirects, limits, sanitized errors)
       └── response dispatcher
@@ -204,14 +238,15 @@ ruff format --check .
 python -m build
 ```
 
-The tests do not require live network access.
+The normal test suite uses mocked subprocesses and does not require hakrawler or live network access.
 
 ## Current limitations
 
-- Wordlister processes the supplied URL or URL list; it is not a recursive crawler.
+- Recursive discovery requires a separately installed `hakrawler` executable and does not execute browser JavaScript.
+- Routes that only appear after client-side JavaScript execution may not be discovered.
+- `--max-pages` limits Wordlister's post-discovery fetches; hakrawler itself is bounded by depth, page-size, and crawler-timeout settings rather than a native page-count flag.
 - External JavaScript and CSS assets are not downloaded for secondary analysis.
 - JavaScript extraction is best-effort and does not implement a full parser.
-- XML/SVG bodies currently use generic text tokenization.
 - The current CLI performs GET requests only.
 
 ## Project governance

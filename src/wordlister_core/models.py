@@ -23,6 +23,34 @@ class ExtractOptions:
 
 
 @dataclass(frozen=True, slots=True)
+class DiscoveryOptions:
+    """Controls optional URL discovery by an external crawler."""
+
+    provider: Literal["none", "hakrawler"] = "none"
+    mode: Literal["single", "domain", "subdomain"] = "domain"
+    max_depth: int = 0
+    max_pages: int = 1000
+    timeout: int = 120
+    executable: str = "hakrawler"
+
+    def __post_init__(self) -> None:
+        if self.provider not in {"none", "hakrawler"}:
+            raise ValueError("unsupported crawler provider")
+        if self.mode not in {"single", "domain", "subdomain"}:
+            raise ValueError("unsupported crawler mode")
+        if self.max_depth < 0:
+            raise ValueError("depth cannot be negative")
+        if self.max_pages < 1:
+            raise ValueError("max_pages must be at least 1")
+        if self.timeout < 1:
+            raise ValueError("crawler_timeout must be at least 1 second")
+        if not self.executable or "\x00" in self.executable:
+            raise ValueError("crawler_path must name an executable")
+        if self.provider == "none" and self.max_depth > 0:
+            raise ValueError("--depth requires --crawler hakrawler")
+
+
+@dataclass(frozen=True, slots=True)
 class HttpOptions:
     """Safety and resource limits for HTTP requests."""
 

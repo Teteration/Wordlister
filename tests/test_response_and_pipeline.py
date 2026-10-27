@@ -33,13 +33,13 @@ class ResponseExtractorTests(unittest.TestCase):
                 "start",
                 "api",
                 "profile",
-                "Location",
                 "displayName",
-                "securityResearcher",
                 "password",
-                "X-Request-ID",
             }.issubset(words)
         )
+        self.assertNotIn("Location", words)
+        self.assertNotIn("securityResearcher", words)
+        self.assertNotIn("X-Request-ID", words)
         self.assertNotIn("DoNotLeakMe123", words)
         self.assertNotIn("opaque-request-id-that-should-not-be-used", words)
 
@@ -57,7 +57,9 @@ class FakeFetcher:
             text="""
                 <form action="/resetPassword/resetPassword"></form>
                 <script>fetch("/resetPassword")</script>
-                <script type="application/json">{"resetPassword": true}</script>
+                <script type="application/json">
+                  {"resetPassword": true, "نامکاربر": true}
+                </script>
                 <p>accountSettings profileDashboard</p>
             """,
         )
@@ -79,8 +81,8 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(tuple(sorted(result.words)), result.words)
         self.assertEqual(1, len(result.failures))
         self.assertEqual("network_error", result.failures[0].code)
-        self.assertIn("accountSettings", result.words)
-        self.assertIn("profileDashboard", result.words)
+        self.assertNotIn("accountSettings", result.words)
+        self.assertNotIn("profileDashboard", result.words)
         self.assertEqual(2, result.processed_targets)
 
     def test_preserves_counts_sources_and_source_based_score(self) -> None:
@@ -98,6 +100,7 @@ class PipelineTests(unittest.TestCase):
             ("form.action", "javascript.fetch", "json.key"),
             entries["resetPassword"].sources,
         )
+        self.assertNotIn("نامکاربر", entries)
         self.assertEqual(1, entries["one"].count)
 
 

@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from wordlister_core.cli import EXIT_ERROR, EXIT_PARTIAL, EXIT_SUCCESS, main
-from wordlister_core.models import TargetFailure, WordInfo, WordlistResult
+from wordlister_core.models import DiscoveryOptions, TargetFailure, WordInfo, WordlistResult
 
 
 class CliTests(unittest.TestCase):
@@ -125,6 +125,73 @@ class CliTests(unittest.TestCase):
             ["https://example.com/one", "https://example.com/two"],
             captured_targets,
         )
+
+    def test_external_discovery_targets_are_passed_to_pipeline(self) -> None:
+        captured_targets: list[str] = []
+        captured_options: list[DiscoveryOptions] = []
+
+        def fake_discover(targets: list[str], **kwargs: object) -> tuple[str, ...]:
+            captured_options.append(kwargs["options"])
+            self.assertEqual(["https://example.com"], targets)
+            return ("https://example.com/", "https://example.com/account")
+
+        def fake_build(targets: list[str], **_: object) -> WordlistResult:
+            captured_targets.extend(targets)
+            return WordlistResult(words=(), failures=(), processed_targets=2)
+
+        with (
+            patch("wordlister_core.cli.discover_targets", side_effect=fake_discover),
+            patch("wordlister_core.cli.build_wordlist", side_effect=fake_build),
+            patch("sys.stdout", io.StringIO()),
+            patch("sys.stderr", io.StringIO()),
+        ):
+            exit_code = main(
+                [
+                    "--url",
+                    "https://example.com",
+                    "--crawler",
+                    "hakrawler",
+                    "--mode",
+                    "subdomain",
+                    "--depth",
+                    "3",
+                    "--max-pages",
+                    "250",
+                    "--crawler-timeout",
+                    "45",
+                    "--crawler-path",
+                    "/opt/tools/hakrawler",
+                ]
+            )
+
+        self.assertEqual(EXIT_SUCCESS, exit_code)
+        self.assertEqual(
+            DiscoveryOptions(
+                provider="hakrawler",
+                mode="subdomain",
+                max_depth=3,
+                max_pages=250,
+                timeout=45,
+                executable="/opt/tools/hakrawler",
+            ),
+            captured_options[0],
+        )
+        self.assertEqual(
+            ["https://example.com/", "https://example.com/account"],
+            captured_targets,
+        )
+
+    def test_depth_without_crawler_returns_clear_error(self) -> None:
+        stderr = io.StringIO()
+
+        with (
+            patch("sys.stdout", io.StringIO()),
+            patch("sys.stderr", stderr),
+        ):
+            exit_code = main(["--url", "https://example.com", "--depth", "2"])
+
+        self.assertEqual(EXIT_ERROR, exit_code)
+        self.assertIn("--depth requires --crawler hakrawler", stderr.getvalue())
 
     def test_invalid_options_return_error_without_traceback(self) -> None:
         stderr = io.StringIO()

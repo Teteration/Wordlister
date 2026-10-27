@@ -1,6 +1,7 @@
 import unittest
 
-from wordlister_core.tokenizer import is_opaque_value, is_sensitive_name, tokenize
+from wordlister_core.models import ExtractOptions
+from wordlister_core.tokenizer import filter_words, is_opaque_value, is_sensitive_name, tokenize
 
 
 class TokenizerTests(unittest.TestCase):
@@ -46,6 +47,23 @@ class TokenizerTests(unittest.TestCase):
         self.assertEqual(1, words["resetPassword"])
         self.assertEqual(1, words["reset"])
         self.assertEqual(1, words["Password"])
+
+    def test_drops_persian_and_arabic_script_words(self) -> None:
+        words = tokenize("account کاربر نام‌کاربری userکاربر endpoint")
+
+        self.assertIn("account", words)
+        self.assertIn("endpoint", words)
+        self.assertNotIn("کاربر", words)
+        self.assertNotIn("نام", words)
+        self.assertNotIn("کاربری", words)
+        self.assertNotIn("userکاربر", words)
+        self.assertNotIn("user", words)
+
+        filtered = filter_words(
+            {"accountId", "شناسه", "userنام", "café", "v2"},
+            ExtractOptions(character_filter="unicode"),
+        )
+        self.assertEqual({"accountId", "café", "v2"}, filtered)
 
 
 if __name__ == "__main__":

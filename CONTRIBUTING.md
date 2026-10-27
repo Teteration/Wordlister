@@ -41,12 +41,14 @@ python -m build
 - Preserve deterministic output regardless of worker completion order.
 - Filter sensitive values before tokenization when context is available.
 - Add an abstraction only when it removes current duplication or represents a stable boundary.
-- Do not add crawling or secondary asset downloads as an incidental change.
+- Keep discovery providers behind the adapter boundary and treat all external-tool output as untrusted input.
+- Do not add secondary asset downloads or browser execution as an incidental change.
 
 ## Tests
 
 - Unit tests must not depend on public internet access.
 - Use injected fake fetchers and sessions for HTTP behavior.
+- Mock external discovery subprocesses; hakrawler must not be required by the normal test suite.
 - Cover success, boundary, and failure paths.
 - Security fixes require a regression test.
 
